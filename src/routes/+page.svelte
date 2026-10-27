@@ -264,8 +264,11 @@
 	/** The member list's width and, on wide screens, whether it's collapsed. */
 	const memberList = new SidebarLayout({ side: 'right', ...MEMBER_LIST_WIDTHS, load: loadMemberListPrefs, save: saveMemberListPrefs });
 
-	/** `/__preview` passes its in-memory server's sockets; every other visit connects for real. */
-	let { webSocketFactory }: { webSocketFactory?: WebSocketFactory } = $props();
+	/**
+	 * `/__preview` passes its in-memory server's sockets, and `/archive` those of the server reading an export,
+	 * with where and when it was saved (`archive`); every other visit connects for real.
+	 */
+	let { webSocketFactory, archive }: { webSocketFactory?: WebSocketFactory; archive?: { server: string; exportedAt: string } } = $props();
 	/** Against the in-memory server: no backend to pick, and nothing remembered. */
 	const previewMode = untrack(() => webSocketFactory !== undefined);
 
@@ -507,7 +510,14 @@
 		? newDividerBefore(timeline, newDivider.after, session.you, Boolean(paneRoom?.olderAvailable))
 		: undefined);
 	// `server.agent` names the implementation, for debugging, not the server: the host is the label.
-	let backendLabel = $derived(backendHost(serverInput) || 'Apron');
+	let backendLabel = $derived(backendHost(archive?.server ?? serverInput) || 'Apron');
+	/** In place of the guest's read-only line, while reading an export: whose it is, and from when. */
+	let archiveNote = $derived.by(() => {
+		if (!archive) return undefined;
+		const saved = new Date(archive.exportedAt);
+		const when = Number.isNaN(saved.getTime()) ? '' : `, saved ${saved.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`;
+		return `An export from ${backendHost(archive.server) || 'an Apron server'}${when}. It’s read-only.`;
+	});
 	// A thread kept through a reconnect counts what it had while it catches up, rather than the count going and coming back.
 	let threadReplyCount = $derived(threadRoom?.loaded || threadRoom?.resumed ? messages.length : undefined);
 	/** Messages after the newest you had on screen, by `message_id`, so older ones loading above don't count. */
@@ -2927,7 +2937,7 @@
 					oncancel={() => { selection.cancel(); composer?.focus(); }}
 				/>
 			{:else if session.readOnly}
-				<ReadOnlyBar {passkeyUnavailable} onsignin={() => openConnect({ signIn: true })} />
+				<ReadOnlyBar {passkeyUnavailable} archive={archiveNote} onsignin={() => openConnect({ signIn: true })} />
 			{:else}
 				<Composer
 					bind:this={composer}
