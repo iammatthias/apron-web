@@ -34,9 +34,12 @@ export function userIn(snapshot: Pick<ClientSnapshot, 'users' | 'userAliases'>, 
 	return Object.assign(merged, kept) as Identity;
 }
 
-/** Messages of a room in timeline order. */
+/**
+ * Messages of a room in timeline order, without tombstones: a deleted message
+ * leaves the feed. `timeline.events` keeps it, so a reply or link to it still resolves.
+ */
 export function timelineMessages(room: RoomSnapshot | undefined): MessageRecord[] {
-	return room ? timelineEvents(room.timeline) : [];
+	return room ? timelineEvents(room.timeline).filter((event) => !event.deleted) : [];
 }
 
 /** Finds a message in any visible room's published timeline (for example a cross-room reply target). */

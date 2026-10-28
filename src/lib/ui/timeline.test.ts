@@ -3,7 +3,8 @@ import { ProtocolStore, applyRecords, decodeHistoryRecords, timelineEvents, type
 import { markdownText } from '$lib/protocol/markdown';
 import type { MessageRecord } from '$lib/protocol/types';
 import { byActivity, escapeMarkdown, buildRoomTimeline, inHeldOrder, buildThreadTimeline, newDividerBefore, sidebarRooms, sidebarSections, threadEntries, threadEntry, threadDescriptionFor, threadDescriptionText, threadLatest, threadsWithNews, threadLostPrivacy, threadStartedFrom, threadTitleFor, type TimelineItem } from './timeline';
-import { isGrouped, dayLabel, GROUP_WINDOW_MS } from './time';
+import { isGrouped, dayKeyOf, dayLabel, GROUP_WINDOW_MS } from './time';
+import { timelineMessages } from '$lib/protocol/client';
 import { messageSnippet, peopleIn, rangeBetween, spanOf } from './messages';
 import { roomSnapshot as room } from '$lib/test/builders';
 
@@ -102,7 +103,7 @@ describe('thread grouping', () => {
 		const second = message(2000, 'dana', { room_id: 't1' });
 		const third = message(3000, 'bob', { room_id: 't1', deleted: true, body: undefined });
 		const loaded = threadEntry(room('t1', [first, second, third], { parentRoomId: 'general', title: 'Deploy' }));
-		expect(loaded).toMatchObject({ id: 't1', parentRoomId: 'general', title: 'Deploy', count: 3, loaded: true, latestMessage: third });
+		expect(loaded).toMatchObject({ id: 't1', parentRoomId: 'general', title: 'Deploy', count: 2, loaded: true, latestMessage: second });
 		expect(loaded.participants.map((person) => person.user_id)).toEqual(['dana', 'bob']);
 		const partial = threadEntry(room('t1', [first], { parentRoomId: 'general', loaded: false }));
 		expect(partial.count).toBeUndefined();
@@ -142,7 +143,6 @@ describe('thread grouping', () => {
 		expect(threadDescriptionText(entry)).toBe('Line one\nLine two\nLine three');
 		expect(threadLatest(entry)).toEqual({ sender: 'Bob', text: 'latest words' });
 		expect(entry.lastReplyId).toBe(latest.message_id);
-		expect(threadLatest({ latestMessage: { ...latest, deleted: true } })).toEqual({ sender: '', text: 'Message deleted' });
 		expect(threadLatest({ latestMessage: message(1, 'bob', { body: { embeds: [{ kind: 'image' }] } }) })).toMatchObject({ text: 'Attachment' });
 		expect(threadLatest({ latestMessage: undefined })).toBeUndefined();
 		// Shown without bidi embeddings and overrides (§3.5.2).
@@ -207,6 +207,34 @@ describe('room view', () => {
 		expect(kinds(plainItems)).toEqual(['date', 'message', 'message']);
 		expect(plainItems[2]).toMatchObject({ grouped: true });
 		expect(buildRoomTimeline({ messages: [], threads: [bare], now }).map((item) => item.kind)).toEqual(['date', 'thread']);
+	});
+});
+
+describe('deleted messages', () => {
+	const tombstone = (offset: number, from: string) => message(offset, from, { deleted: true, body: undefined });
+
+	it('leave the room feed: the sender’s next message joins the group before, and a day of only deleted ones has no divider', () => {
+		const now = new Date(base + 2 * DAY);
+		const general = room('general', [message(0, 'alice'), tombstone(1000, 'bob'), message(2000, 'alice'), tombstone(DAY, 'alice'), message(2 * DAY, 'bob')]);
+		const items = buildRoomTimeline({ messages: timelineMessages(general), threads: [], now });
+		expect(items.map((item) => (item.kind === 'message' ? [item.key, item.grouped] : [item.kind, item.kind === 'date' ? item.label : '']))).toEqual([
+			['date', dayLabel(message(0, 'alice'), now)],
+			[String(base), false],
+			[String(base + 2000), true],
+			['date', 'Today'],
+			[String(base + 2 * DAY), false]
+		]);
+	});
+
+	it('leave a thread’s feed, its first message too', () => {
+		const t1 = room('t1', [tombstone(1000, 'bob'), message(2000, 'dana', { room_id: 't1' })], { parentRoomId: 'general' });
+		expect(buildThreadTimeline({ messages: timelineMessages(t1) }).map((item) => item.key)).toEqual([`date:${dayKeyOf(String(base))}`, String(base + 2000)]);
+	});
+
+	it('put the New divider above the first unread message still there', () => {
+		const general = room('general', [message(1, 'alice'), tombstone(2, 'bob'), message(3, 'bob')]);
+		const items = buildRoomTimeline({ messages: timelineMessages(general), threads: [], now: new Date(base) });
+		expect(newDividerBefore(items, String(base + 1), undefined, false)).toBe(String(base + 3));
 	});
 });
 

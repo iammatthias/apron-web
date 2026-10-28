@@ -158,13 +158,19 @@ export const SCENES: Scene[] = [
 			await look();
 			await editor.fill('Mine, edited');
 			await page.getByRole('button', { name: 'Save changes', exact: true }).click();
-			const edited = preview.message('Mine, edited');
-			await expect(edited).toBeVisible();
+			// By its id: the reply quoting it has its text too.
+			const edited = page.locator(`article[data-message-id="${await preview.message('Mine, edited').getAttribute('data-message-id')}"]`);
+			await action(edited, 'Reply to message');
+			const reply = await send(preview, 'A reply to mine');
 			page.once('dialog', (dialog) => dialog.accept());
 			await action(edited, 'More actions');
 			await look();
 			await edited.getByRole('button', { name: 'Delete message', exact: true }).click();
-			await expect(page.getByText('Message deleted', { exact: true })).toBeVisible();
+			// A deleted message leaves the feed; a reply's quote of it says so.
+			await expect(edited).toHaveCount(0);
+			await expect(reply.getByTestId('reply-reference')).toContainText('Message deleted');
+			await reply.getByTestId('reply-reference').click();
+			await expect(page.getByText('That message was deleted', { exact: true })).toBeVisible();
 			await look();
 		}
 	},
