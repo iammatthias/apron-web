@@ -1088,7 +1088,9 @@ Embeds render by kind, in the design system's components ([PROTOCOL.md §4.8](ht
   load sandboxed (`allow-scripts`, never same-origin, no referrer), clamped to
   480px. **`html`** embeds are sanitized with DOMPurify before insertion.
 - Any other kind renders from its `og` as a link card, else as the fallback card
-  with its kind name and its `url` or `text`.
+  with its kind name and its `url` or `text`. A card whose `og.video` or
+  `og.audio` loads plays it in the card, a video with the `og.image` as its
+  poster, and the text under the player is the link to the embed's `url`.
 - **Link previews**: any link in a message is checked against a map of sites
   by host (`SITES` in `link-sites.ts`), and up to three links on those sites
   each get a `link` embed, with an `og` the sender builds from the site's
