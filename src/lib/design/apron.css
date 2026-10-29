@@ -176,11 +176,18 @@ body { margin: 0; font-family: var(--font-sans); font-size: var(--text-body); li
 /* Its width: as written, up to 12em; past the row's width, the row's width (ellipsized); but never under --ap-role-min,
    so a badge with less room than that doesn't fit its row and drops. */
 .ap-role { display: inline-block; flex: none; max-width: min(12em, max(var(--ap-role-min), 100%)); height: var(--ap-role-h); padding: 0 5px; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); font-family: var(--font-sans); font-size: var(--text-caps); line-height: var(--leading-sm); font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
-/* Caps-only text sits high in its line box, so trim the box to the cap height and pad it evenly to the 16px badge
-   (2 × (14px − 1cap) / 2 + 1cap + the 2px border), whatever the system face; without text-box, the line box overhangs
-   the badge's 14px inside, which lowers the caps to about center. */
-@supports (text-box: trim-both cap alphabetic) {
-	.ap-role { height: auto; padding-block: calc((var(--ap-role-h) - 2px - 1cap) / 2); text-box: trim-both cap alphabetic; }
+/*
+ * Caps-only text, centered on its caps in whatever face: where a face's ascent and descent would place the caps (high in
+ * DejaVu Sans, low in Inter), its line box has no height (line-height: 0) and a strut sets the baseline instead. The
+ * strut, an empty inline-block, has its baseline at its bottom; as tall as half the space inside the border plus half a
+ * cap height (the `cap` unit; .36em, a usual one, where it's unknown), rounded to a pixel so the baseline lands on one,
+ * it puts the caps in the middle. The badge (.ap-role), a stacked badge's role (.ap-role-label) and its count
+ * (.ap-role-more), each with --ap-role-in, the height inside its border.
+ */
+.ap-role:not(.ap-role-stacked), .ap-role-stacked > .ap-role-label { --ap-role-in: calc(var(--ap-role-h) - 2px); line-height: 0; }
+.ap-role-more { --ap-role-in: var(--ap-role-h); line-height: 0; }
+:is(.ap-role:not(.ap-role-stacked), .ap-role-stacked > .ap-role-label, .ap-role-more)::before {
+	content: ''; display: inline-block; height: calc(var(--ap-role-in) / 2 + .36em); height: calc(var(--ap-role-in) / 2 + .5cap); height: round(calc(var(--ap-role-in) / 2 + .5cap), 1px);
 }
 .ap-role-admin { border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent); }
 .ap-role-bot { border-color: color-mix(in srgb, var(--denim) 55%, transparent); color: var(--denim); }
@@ -207,17 +214,12 @@ body { margin: 0; font-family: var(--font-sans); font-size: var(--text-body); li
 .ap-role-stacked.ap-role-admin { --ap-role-more: var(--accent); --ap-role-more-ink: var(--on-accent); }
 .ap-role-stacked.ap-role-bot { --ap-role-more: var(--denim); --ap-role-more-ink: var(--on-accent); }
 .ap-roles-stack > .ap-role-stacked { display: inline-flex; height: var(--ap-role-h); padding: 0; border-width: 0; }
-.ap-role-stacked > .ap-role-label { flex: 0 1 auto; min-width: 0; padding: 0 5px; box-sizing: border-box; border: 1px solid; border-color: inherit; border-inline-end: 0; border-radius: 0; border-start-start-radius: var(--radius-sm); border-end-start-radius: var(--radius-sm); line-height: calc(var(--ap-role-h) - 2px); overflow: hidden; text-overflow: ellipsis; }
-.ap-role-more { flex: none; width: calc(9px + var(--ap-role-more-chars) * .65em); box-sizing: border-box; background: var(--ap-role-more); color: var(--ap-role-more-ink); line-height: var(--ap-role-h); text-align: center; letter-spacing: 0; font-variant-numeric: tabular-nums lining-nums; }
+.ap-role-stacked > .ap-role-label { flex: 0 1 auto; min-width: 0; padding: 0 5px; box-sizing: border-box; border: 1px solid; border-color: inherit; border-inline-end: 0; border-radius: 0; border-start-start-radius: var(--radius-sm); border-end-start-radius: var(--radius-sm); overflow: hidden; text-overflow: ellipsis; }
+.ap-role-more { flex: none; width: calc(9px + var(--ap-role-more-chars) * .65em); box-sizing: border-box; background: var(--ap-role-more); color: var(--ap-role-more-ink); text-align: center; letter-spacing: 0; font-variant-numeric: tabular-nums lining-nums; }
 /* The count reads "+2" in either direction (under dir="rtl" the line would make it "2+"). */
 .ap-role-more { direction: ltr; }
 /* The + is drawn about the middle of the lowercase: a hair smaller and raised, it sits level with the digit's caps. */
 .ap-role-plus { display: inline-block; font-size: .9em; transform: translateY(-.08em); margin-right: -.02em; }
-@supports (text-box: trim-both cap alphabetic) {
-	.ap-roles-stack > .ap-role-stacked { padding-block: 0; }
-	.ap-role-stacked > .ap-role-label { line-height: inherit; padding-block: calc((var(--ap-role-h) - 2px - 1cap) / 2); text-box: trim-both cap alphabetic; }
-	.ap-role-more { line-height: inherit; padding-block: calc((var(--ap-role-h) - 1cap) / 2); text-box: trim-both cap alphabetic; }
-}
 /* Out of the flow, so the row is only as wide as what shows and what follows it (the time) stays beside it. */
 .ap-roles-stack > .ap-role-behind { position: absolute; top: 0; inset-inline-start: 0; opacity: 0; pointer-events: none; }
 /* None fit: the row takes no room, lead included, and gives it back to the name. */
@@ -396,6 +398,7 @@ a.ap-embed-card:hover { background: var(--hover); }
 .ap-room-active .ap-room-name { font-weight: 600; }
 .ap-room-active::before { content: ''; position: absolute; inset-inline-start: var(--space-1); top: var(--space-1_5); bottom: var(--space-1_5); width: 3px; border-radius: var(--radius-full); background: var(--accent); pointer-events: none; }
 .ap-room-unread { color: var(--ink); }
+
 /* A muted room (§4.5 `mute` with its `room_id`): a bell-off at the end of its row, next to its count, and what's new in it stays quiet. */
 .ap-muted { flex: none; width: 14px; height: 14px; color: var(--ink-muted); }
 .ap-room-unread .ap-room-name { font-weight: 600; }
@@ -551,7 +554,9 @@ a.ap-embed-card:hover { background: var(--hover); }
 .ap-shell { --toggle-clear: calc(var(--space-3) + var(--control-md) + var(--space-2)); position: relative; display: grid; grid-template-columns: var(--side-col, var(--sidebar-w)) minmax(0, 1fr); height: 100%; min-height: 0; overflow: clip; background: var(--bg-100); }
 .ap-shell-side { position: relative; display: flex; flex-direction: column; min-height: 0; background: var(--bg-000); border-inline-end: 1px solid var(--line); }
 .ap-shell-sidehead { display: flex; align-items: center; height: var(--header-h); padding: 0 var(--space-4); border-bottom: 1px solid var(--line); font-size: var(--text-body); line-height: var(--leading-field); font-weight: 600; box-sizing: border-box; }
-.ap-shell-sidebody { flex: 1; overflow: auto; padding: var(--space-3) var(--space-2); }
+.ap-shell-sidebody { --edge: var(--space-2); flex: 1; overflow: auto; padding: var(--space-3) var(--edge); }
+/* Its rows are edge rows (below) on its start side; a button doesn't stretch, so a room's is widened by hand. */
+.ap-shell-sidebody .ap-room { width: calc(100% + var(--edge)); }
 .ap-shell-main { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; container-type: inline-size; }
 /*
  * Filling the window (ap-shell-viewport). While an on-screen keyboard is up (the page sets data-keyboard, --app-height and
@@ -683,7 +688,7 @@ html[data-keyboard] .ap-shell-viewport .ap-composer { margin-bottom: var(--space
 /* Small, after the count, as the rooms list's header buttons: most visits are to see who is here. */
 .ap-memberlist-head .ap-memberlist-addtoggle { width: var(--control-sm); height: var(--control-sm); }
 /* Wider at the start (the left, or the right under dir="rtl"), so the avatars line up under the header's start (its toggle, with a column of its own, or Members). */
-.ap-memberlist-body { flex: 1; min-height: 0; overflow: auto; padding: var(--space-3) var(--space-2); padding-inline-start: var(--space-3); }
+.ap-memberlist-body { --edge: var(--space-2); flex: 1; min-height: 0; overflow: auto; padding: var(--space-3) var(--edge); padding-inline-start: var(--space-3); }
 .ap-memberlist-placeholder { display: grid; gap: var(--space-3); padding: var(--space-2) var(--space-3); }
 .ap-memberlist-placeholder .ap-skel { height: 12px; }
 .ap-memberlist-note { margin: 0; padding: var(--space-1) var(--space-3); color: var(--ap-tone, var(--ink-muted)); font-size: var(--text-ui); line-height: var(--leading-ui); }
@@ -692,10 +697,26 @@ html[data-keyboard] .ap-shell-viewport .ap-composer { margin-bottom: var(--space
 .ap-memberlist-sectionhead { padding: 0 var(--space-1) var(--space-1); }
 .ap-memberlist-sectionhead .ap-sect-toggle { padding-inline-start: 0; }
 .ap-memberlist-people { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
-.ap-member { position: relative; display: flex; align-items: center; gap: var(--space-2); min-height: 32px; padding: 2px var(--space-1); color: var(--ink); font-size: var(--text-ui); line-height: var(--leading-ui); }
-/* Role badges follow the name, as beside a message's sender; the remove button floats over the row's far end. */
+/* A member's row: its fill starts halfway between the list's start edge and the avatar, reaching into the list's padding. */
+.ap-member { position: relative; display: flex; align-items: center; gap: var(--space-2); min-height: 32px; margin-inline-start: calc(-1 * var(--space-1)); padding: 2px var(--space-1); padding-inline-start: var(--space-2); border-radius: var(--radius-md); color: var(--ink); font-size: var(--text-ui); line-height: var(--leading-ui); cursor: pointer; }
+/* The whole row is a press (MemberList: its menu, or their card), so the pointer anywhere on it tints it, as a message
+   under the pointer; and it stays tinted while its menu is open. */
+.ap-member:hover, .ap-member-menu { background: var(--hover-soft); }
+
+/*
+ * Edge rows: in a pane's list, a row's fill reaches the pane's edge, square there and rounded inside, and the accent bar
+ * at its start (the open room, a message that mentions you) sits on that edge: the rooms list's rows and the timeline's
+ * messages on their start side, the member list's on its end. The fill grows through a transparent border, so the row's
+ * text, and what's placed inside it, stay where they were. --edge is how far the row sits in from the edge; --edge-margin,
+ * the part of that which is its own margin, if any (a message's: the timeline has no padding). A system line, centred,
+ * stays inset.
+ */
+.ap-timeline .ap-msg:not(.ap-msg-system) { --edge-margin: var(--edge); }
+.ap-shell-sidebody .ap-room, .ap-timeline .ap-msg:not(.ap-msg-system) { margin-inline-start: calc(var(--edge-margin, 0px) - var(--edge)); border-inline-start: var(--edge) solid transparent; border-start-start-radius: 0; border-end-start-radius: 0; }
+.ap-member { margin-inline-end: calc(var(--edge-margin, 0px) - var(--edge)); border-inline-end: var(--edge) solid transparent; border-start-end-radius: 0; border-end-end-radius: 0; }
+.ap-shell-sidebody .ap-room-active:not(.ap-room-nested)::before, .ap-timeline .ap-msg-mention::before { inset-inline-start: calc(-1 * var(--edge)); border-start-start-radius: 0; border-end-start-radius: 0; }
+/* Role badges follow the name, as beside a message's sender. */
 .ap-member-who { display: flex; align-items: center; gap: var(--space-2); flex: 0 1e12 auto; min-width: 0; margin: 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
-.ap-member-who:hover .ap-member-name { text-decoration: underline; }
 /* Offline members (§4.5) recede, badges and all; their ring and name still read. */
 .ap-member-offline .ap-member-who { color: var(--ink-muted); }
 .ap-member-offline .ap-avatar, .ap-member-offline .ap-roles { opacity: var(--opacity-dim); }
@@ -713,13 +734,6 @@ html[data-keyboard] .ap-shell-viewport .ap-composer { margin-bottom: var(--space
 	/* A member's button: its avatar and the name's least. */
 	.ap-member-who { min-width: calc-size(max-content, min(size, calc(var(--avatar-sm) + var(--space-2) + var(--ap-name-min)), 100%)); }
 }
-/* Remove shows on hover or focus, over the end of the row rather than holding a gap there, so names and badges keep the width. */
-.ap-member .ap-member-remove { position: absolute; top: 50%; inset-inline-end: var(--space-1); width: var(--control-sm); height: var(--control-sm); transform: translateY(-50%); background: var(--bg-000); box-shadow: -8px 0 6px var(--bg-000); opacity: 0; pointer-events: none; }
-/* Mirrored, it floats over the left end, its fade toward the name on its right. */
-:where([dir='rtl']) .ap-member .ap-member-remove { box-shadow: 8px 0 6px var(--bg-000); }
-.ap-member:hover .ap-member-remove, .ap-member:focus-within .ap-member-remove { opacity: 1; pointer-events: auto; }
-/* Touch screens have no hover, so it's always there, in the row's flow at its far end. */
-@media (hover: none) { .ap-member .ap-member-remove { position: static; flex: none; margin-inline-start: auto; transform: none; background: transparent; box-shadow: none; opacity: 1; pointer-events: auto; } }
 
 /* EmptyState — the main pane, or a timeline, with nothing in it: a title, a line on what to do, and a button */
 .ap-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); padding: var(--space-8); color: var(--ink-muted); text-align: center; }
@@ -750,10 +764,10 @@ html[data-keyboard] .ap-shell-viewport .ap-composer { margin-bottom: var(--space
 /* Smaller than an icon button, so a toast that can be closed is no taller than one that can't. */
 .ap-toast .ap-toast-close { width: var(--control-xs); height: var(--control-xs); margin: -2px 0; flex: none; }
 /* Scrolling past either end stays in the timeline, rather than carrying on to the page (which a phone's keyboard lets scroll). */
-.ap-timeline { flex: 1; overflow: auto; overscroll-behavior: contain; padding-bottom: var(--space-2); }
+.ap-timeline { --edge: var(--space-2); flex: 1; overflow: auto; overscroll-behavior: contain; padding-bottom: var(--space-2); }
 
 /* Thread rows nested under their room, and the open-thread header breadcrumb */
-.ap-room-nested { padding: 3px var(--space-3) 3px calc(var(--space-3) + var(--space-4)); font-size: var(--text-ui); line-height: var(--leading-ui); align-items: flex-start; }
+.ap-room-nested { padding: 3px var(--space-3); padding-inline-start: calc(var(--space-3) + var(--space-4)); font-size: var(--text-ui); line-height: var(--leading-ui); align-items: flex-start; }
 /* Counts stay beside the title when preview lines follow it. */
 .ap-room-nested .ap-count { margin-top: -1px; }
 /* Top-aligned, as a thread's row is: centred on its first line, with the name, the count and the time. */
@@ -1196,6 +1210,12 @@ a.ap-linkcard:hover :is(.ap-linkcard-known, .ap-linkcard-name) { color: var(--de
 .ap-menu { position: absolute; inset-inline-end: 0; bottom: calc(100% + var(--space-1)); z-index: var(--z-menu); min-width: 200px; margin: 0; padding: var(--space-1); list-style: none; background: var(--bg-200); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-popover); }
 .ap-menu-item { font: inherit; display: block; width: 100%; padding: var(--space-1_5) var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--ink); text-align: start; cursor: pointer; }
 .ap-menu-item:hover { background: var(--hover); }
+/* ContextMenu: a menu at a point, fixed to the viewport (its place set where it opens) and over everything fixed there,
+   as a popover is: the member list's overlay on narrow screens too; a choice that takes something away in the danger
+   color. */
+.ap-menu-at { position: fixed; z-index: var(--z-sheet); inset: auto; top: 0; left: 0; min-width: 160px; }
+.ap-menu-at:focus { outline: none; }
+.ap-menu-item-danger { color: var(--danger); }
 .ap-selbar-denied { color: var(--danger); }
 /* Every thread of the room is a destination: keep a long list on screen and scrollable. */
 .ap-selbar-pick .ap-menu { max-height: min(320px, 50dvh); overflow-y: auto; max-width: calc(100vw - var(--space-8)); }

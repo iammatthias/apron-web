@@ -95,7 +95,7 @@
 	import { PushSettings } from '$lib/ui/push-settings.svelte';
 	import { notifyAccount, notifyScopesOf, pushWake } from '$lib/ui/notify-scopes';
 	import { arrivalAlerts } from '$lib/ui/alerts';
-	import { readAction } from '$lib/ui/read-action';
+	import { readAction, readElsewhere, readFurthest } from '$lib/ui/read-action';
 	import { createdRoom, createdThread, moveCheck, type PendingThread } from '$lib/ui/created';
 	import { accountServer, canOfferInstall, isStandalone, keepsPushOff, needsHomeScreen, offeredWake, webPushAccount, webPushSupported, type InstallPromptEvent } from '$lib/ui/web-push';
 
@@ -364,6 +364,16 @@
 	let typingTimer: ReturnType<typeof setTimeout> | undefined;
 	/** The last read whose notifications were closed (account, server, room, message), so each closes once. */
 	let closedThrough: string | undefined;
+	/**
+	 * Per account's `push_id`: how far this page read each room itself, and how
+	 * far a read elsewhere closed its notifications here (`readElsewhere`).
+	 */
+	const elsewhereReads = new Map<string, { own: Map<string, string>; closed: Map<string, string> }>();
+	const elsewhereFor = (pushId: string) => {
+		let reads = elsewhereReads.get(pushId);
+		if (!reads) elsewhereReads.set(pushId, reads = { own: new Map(), closed: new Map() });
+		return reads;
+	};
 	/** Numbers staged files, so each can be taken off its draft. */
 	let stagedCount = 0;
 	/** Where the last scroll event, or automatic scroll to the latest item, left the list. */
@@ -785,12 +795,30 @@
 		);
 		if (!action) return;
 		untrack(() => {
+			// Kept before the cursor moves: it is what this page read, not a read elsewhere.
+			if (accountPushId) readFurthest(elsewhereFor(accountPushId).own, action.room, action.message);
 			readPositions.read(action.room, action.message);
 			client?.markRead(action.room, action.message);
 			// What you just read here no longer needs its notifications on this device.
 			if (!action.close) return;
 			closedThrough = action.close.key;
 			void closeReadNotifications(action.close.target, action.message);
+		});
+	});
+
+	// A room read on another device closes its notifications here too, up to where you read it, once this page
+	// learns of it: at once while it is open, else as it lists your rooms again (`readElsewhere`). Pushed ones only:
+	// they are what stays on a device, and on Android what the app icon's badge counts.
+	$effect(() => {
+		const pushId = accountPushId;
+		const rooms = session.snapshot.rooms;
+		if (!pushId || previewMode || !session.ready) return;
+		untrack(() => {
+			const reads = elsewhereFor(pushId);
+			for (const { room, message } of readElsewhere(rooms, reads.own, reads.closed)) {
+				reads.closed.set(room, message);
+				void closeReadNotifications({ group: notificationGroup(pushId, room) }, message);
+			}
 		});
 	});
 
@@ -880,10 +908,10 @@
 		});
 	});
 
-	// Threads don't recover with their parent: the open one loads its own history,
-	// again after a reconnect, which lists it afresh.
+	// Threads don't recover with their parent, nor does a room read without joining it: the open one loads its own
+	// history, again after a reconnect, which lists it afresh.
 	$effect(() => {
-		const room = threadRoom;
+		const room = activeThread ? threadRoom : olderSource?.joined === false ? olderSource : undefined;
 		// A held copy (from before a reconnect or a reload) isn't the live thread: that one loads once it's listed.
 		if (!client || !room || !session.ready || session.showingHeld || room.loaded || room.loading || room.recoveryError) return;
 		untrack(() => loadThread(room.id));
@@ -1767,14 +1795,14 @@
 	}
 
 	/**
-	 * Loads a thread's history (§4.3); a failure the client recorded is reported once. One the server refuses for a
+	 * Loads a thread's history, or a room's read without joining it (§4.3); a failure the client recorded is reported once. One the server refuses for a
 	 * while (`retry_after`) isn't a failure: the client waits it out and loads again, the timeline counting down
 	 * meanwhile. A load that succeeds takes the last failure's toast away.
 	 */
 	function loadThread(roomId: string): void {
 		client?.loadRoom(roomId).then(() => feedback.dismiss(threadError), (cause: unknown) => {
 			if (!session.rooms.find((room) => room.id === roomId)?.recoveryError) return;
-			threadError = feedback.error(cause, 'Unable to load thread');
+			threadError = feedback.error(cause, session.rooms.find((room) => room.id === roomId)?.parentRoomId === undefined ? 'Unable to load room' : 'Unable to load thread');
 		});
 	}
 
@@ -3006,7 +3034,7 @@
 		{/if}
 	{/snippet}
 	{#snippet members()}
-		<MemberListSidebar {client} {session} room={paneRoom} open={memberListOpen} canChange={canChangeMembers} canAdd={canAddMembers} />
+		<MemberListSidebar {client} {session} room={paneRoom} open={memberListOpen} canChange={canChangeMembers} canAdd={canAddMembers} canMessage={canStartPrivate} onnamed={(roomId) => arrivals.mine(roomId)} onopenroom={openPrivateRoom} />
 	{/snippet}
 	<!--
 		Outside the conversation pane, which a phone hides while the room list shows: a modal there doesn't render,

@@ -25,3 +25,28 @@ test('Add member adds everyone picked, and keeps who the server refused picked, 
 	await expect(page.getByRole('complementary', { name: 'Room member list' }).locator('li.ap-member[data-user="grace"]')).toBeVisible();
 	await expect(page.getByTestId('room-member-list').getByRole('status')).toHaveText('Added Grace Hopper.');
 });
+
+test.describe('on a phone, signed in to an account', () => {
+	test.use({ ...DEVICES.phone, knobs: { account: true } });
+
+	test('a tap on a member opens their profile, and a long press their menu, over the member list, where Remove from room asks, then removes them', async ({ preview, page }) => {
+		await preview.open();
+		const list = await preview.showMembers();
+		const grace = list.locator('li.ap-member[data-user="grace"]');
+		await preview.press(grace);
+		await expect(page.getByRole('dialog', { name: /Grace Hopper/ })).toBeVisible();
+		await expect(page.getByRole('menu')).toHaveCount(0);
+		await page.keyboard.press('Escape');
+		await expect(page.getByRole('dialog', { name: /Grace Hopper/ })).toHaveCount(0);
+		await preview.hold(grace);
+		const menu = page.getByRole('menu', { name: 'Grace Hopper' });
+		await expect(menu.getByRole('menuitem')).toHaveText(['Profile', 'Direct message', 'Remove from room']);
+		// Over the member list, which is an overlay here: what's at its middle is the menu.
+		const box = (await menu.boundingBox())!;
+		expect(await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('[role="menu"]'), [box.x + box.width / 2, box.y + box.height / 2])).toBe(true);
+		page.once('dialog', (dialog) => dialog.accept());
+		await preview.press(menu.getByRole('menuitem', { name: 'Remove from room' }));
+		await preview.waitForSent('room_leave', (p) => p.user_id === 'grace');
+		await expect(list.locator('li.ap-member[data-user="grace"]')).toHaveCount(0);
+	});
+});
