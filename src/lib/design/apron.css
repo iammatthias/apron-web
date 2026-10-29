@@ -1426,6 +1426,10 @@ pre.ap-embed-streambody { font-family: var(--font-mono); }
 a.ap-embed-ogcard:hover { background: var(--hover); }
 .ap-embed-ogimg { display: block; width: 100%; aspect-ratio: 1.91 / 1; object-fit: cover; background: var(--bg-300); }
 .ap-embed-ogcard .ap-embed-cardtext { padding: var(--space-3) var(--space-4); }
+/* A card that plays its media: the player fills it edge to edge, and only the text under it is the link. */
+.ap-embed-ogcard-player .ap-embed-media { display: block; width: 100%; max-height: none; border: 0; border-radius: 0; }
+.ap-embed-ogcard-player .ap-embed-audio { display: block; width: calc(100% - 2 * var(--space-4)); margin: var(--space-3) var(--space-4) 0; }
+.ap-embed-ogcard-player a.ap-embed-cardtext:hover { background: var(--hover); }
 .ap-embed-site { font-size: var(--text-sm); line-height: var(--leading-sm); color: var(--ink-muted); }
 .ap-embed-desc { font-size: var(--text-ui); line-height: var(--leading-ui); color: var(--ink-muted); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 

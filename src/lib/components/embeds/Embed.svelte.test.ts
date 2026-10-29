@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { flushSync } from 'svelte';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { Embed as EmbedRecord } from '$lib/protocol/types';
 import Embed from './Embed.svelte';
+import { directory } from '$lib/ui/directory.svelte';
 import { button, render } from '$lib/test/dom';
 
 /** Renders a server-relayed embed as a message shows it, and returns the box it drew. */
@@ -58,5 +59,40 @@ describe('an iframe embed (§4.8)', () => {
 		expect(frame.getAttribute('sandbox')).toBe('allow-scripts');
 		expect(frame.getAttribute('referrerpolicy')).toBe('no-referrer');
 		expect(frame.getAttribute('allow')).toBe('');
+	});
+});
+
+describe('a link embed with og media (§4.8.1)', () => {
+	afterEach(() => {
+		directory.origin = undefined;
+		directory.mediaOrigins = [];
+	});
+
+	const link = (og: EmbedRecord['og']): EmbedRecord => ({ kind: 'link', url: 'https://news.example/clip', og: { title: 'The clip', ...og } });
+
+	it('plays media from the server and its named media origins, with the preview image as the poster', () => {
+		directory.origin = 'https://chat.example';
+		directory.mediaOrigins = ['https://media.example'];
+		const box = show(link({ image: { url: 'https://chat.example/f/poster.png' }, video: { url: 'https://media.example/f/clip.mp4', width: 640, height: 360 } }));
+		const video = box.querySelector('video')!;
+		expect([video.getAttribute('src'), video.getAttribute('poster'), video.style.aspectRatio]).toEqual(['https://media.example/f/clip.mp4', 'https://chat.example/f/poster.png', '640 / 360']);
+		expect(box.querySelector('img')).toBeNull();
+		expect(box.querySelector('a')!.getAttribute('href')).toBe('https://news.example/clip');
+		expect(box.querySelector('a')!.textContent).toContain('The clip');
+		expect(box.querySelector('video')!.closest('a')).toBeNull();
+	});
+
+	it('plays og.audio in an audio player', () => {
+		directory.origin = 'https://chat.example';
+		const box = show(link({ audio: { url: 'https://chat.example/f/song.mp3' } }));
+		expect(box.querySelector('audio')!.getAttribute('src')).toBe('https://chat.example/f/song.mp3');
+		expect(box.querySelector('video')).toBeNull();
+	});
+
+	it('loads no media from another origin, and keeps showing the link', () => {
+		directory.origin = 'https://chat.example';
+		const box = show(link({ video: { url: 'https://tracker.example/clip.mp4' }, audio: { url: 'https://tracker.example/song.mp3' } }));
+		expect(box.querySelector('video, audio')).toBeNull();
+		expect(box.querySelector('a')!.getAttribute('href')).toBe('https://news.example/clip');
 	});
 });

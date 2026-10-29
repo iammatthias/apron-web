@@ -3,6 +3,7 @@
 	   Its `class` and `testid` go on whichever of those shows. */
 	import FileIcon from '@lucide/svelte/icons/file';
 	import FileX from '@lucide/svelte/icons/file-x';
+	import EmbedMedia from './EmbedMedia.svelte';
 	import type { EmbedComponentProps } from './types';
 	import { ogRatio, plainClick, safeHttp } from './util';
 
@@ -29,14 +30,13 @@
 	</div>
 {:else if video}
 	<figure data-testid={testid} class={['ap-embed', 'ap-embed-figure', className]}>
-		<!-- svelte-ignore a11y_media_has_caption -->
-		<video class="ap-embed-media" src={video} poster={image} controls preload="metadata" style={ogRatio(og.video) || ogRatio(og.image)}></video>
+		<EmbedMedia {og} />
 		<figcaption class="ap-embed-caption"><a href={url} download={title} target="_blank" rel="noreferrer noopener">{title}</a></figcaption>
 	</figure>
 {:else if audio}
 	<div data-testid={testid} class={['ap-embed', 'ap-embed-card', 'ap-embed-audiocard', className]}>
 		<span class="ap-embed-title">{title}</span>
-		<audio class="ap-embed-audio" src={audio} controls preload="none"></audio>
+		<EmbedMedia {og} />
 	</div>
 {:else if image}
 	<figure data-testid={testid} class={['ap-embed', 'ap-embed-figure', className]}>

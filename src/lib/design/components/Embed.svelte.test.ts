@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
+import EmbedCard from './EmbedCard.svelte';
 import EmbedFrame from './EmbedFrame.svelte';
 import EmbedStream from './EmbedStream.svelte';
 import EmbedUpload from './EmbedUpload.svelte';
@@ -32,6 +33,30 @@ describe('EmbedUpload', () => {
 		link.dispatchEvent(click);
 		expect(click.defaultPrevented).toBe(true);
 		expect(onview).toHaveBeenCalledOnce();
+	});
+});
+
+describe('EmbedCard', () => {
+	it('plays og.video above the text, which stays the link to the embed url', () => {
+		render(EmbedCard, { kind: 'link', url: 'https://news.example/clip', og: { title: 'The clip', image: { url: 'https://chat.example/p.png' }, video: { url: 'https://chat.example/c.mp4' } }, testid: 'card' });
+		const card = document.querySelector('[data-testid="card"]')!;
+		expect(card.tagName).toBe('DIV');
+		expect(card.querySelector('video')!.getAttribute('poster')).toBe('https://chat.example/p.png');
+		expect(card.querySelector('img')).toBeNull();
+		const link = card.querySelector('a')!;
+		expect([link.getAttribute('href'), link.textContent?.trim(), link.contains(card.querySelector('video'))]).toEqual(['https://news.example/clip', 'The clip', false]);
+	});
+
+	it('shows the image above an og.audio player', () => {
+		render(EmbedCard, { kind: 'link', url: 'https://news.example/song', og: { image: { url: 'https://chat.example/p.png' }, audio: { url: 'https://chat.example/s.mp3' } } });
+		expect(document.querySelector('img.ap-embed-ogimg')).not.toBeNull();
+		expect(document.querySelector('audio')!.getAttribute('src')).toBe('https://chat.example/s.mp3');
+	});
+
+	it('is one link, with no player, when its media is not loadable', () => {
+		render(EmbedCard, { kind: 'link', url: 'https://news.example/clip', og: { title: 'The clip', video: { url: '' } }, testid: 'card' });
+		const card = document.querySelector('[data-testid="card"]')!;
+		expect([card.tagName, card.getAttribute('href'), document.querySelector('video, audio')]).toEqual(['A', 'https://news.example/clip', null]);
 	});
 });
 
