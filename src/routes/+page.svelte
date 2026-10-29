@@ -890,7 +890,7 @@
 	});
 
 	$effect(() => {
-		if (editingId && !timeline.some((item) => item.kind === 'message' && item.event.message_id === editingId && !item.event.deleted)) {
+		if (editingId && !timeline.some((item) => item.kind === 'message' && item.event.message_id === editingId)) {
 			editingId = undefined;
 		}
 	});
@@ -1508,7 +1508,10 @@
 		const paneId = thread ?? roomId;
 		const pane = () => session.rooms.find((room) => room.id === paneId);
 		const isOpen = () => activeRoom?.id === roomId && activeThread === thread;
-		const found = () => Boolean(pane()?.timeline.events[id]);
+		const found = () => {
+			const event = pane()?.timeline.events[id];
+			return event !== undefined && !event.deleted;
+		};
 		await until(() => Boolean(pane()?.loaded) || !isOpen(), JUMP_WAIT_MS * 2);
 		for (let page = 0; page < LINKED_MESSAGE_PAGES && client && isOpen() && !found(); page++) {
 			const room = pane();
@@ -2352,6 +2355,10 @@
 	 */
 	async function jumpToMessage(id: string): Promise<void> {
 		const target = resolveMessage(id);
+		if (target?.deleted) {
+			feedback.error('That message was deleted');
+			return;
+		}
 		const destination = target ? destinationOf(target) : undefined;
 		if (!destination) return;
 		if (destination.room !== activeRoom?.id || destination.thread !== activeThread) {

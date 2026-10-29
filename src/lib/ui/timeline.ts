@@ -205,7 +205,6 @@ export function threadDescriptionText(entry: Pick<ThreadEntry, 'description'>): 
 export function threadLatest(entry: Pick<ThreadEntry, 'latestMessage'>): { sender: string; text: string } | undefined {
 	const event = entry.latestMessage;
 	if (!event) return undefined;
-	if (event.deleted) return { sender: '', text: 'Message deleted' };
 	const text = withoutBidiOverrides(textOf(event)).replace(/\s+/g, ' ').trim();
 	return { sender: senderName(event), text: text || (embedsOf(event).length ? 'Attachment' : 'Empty message') };
 }
