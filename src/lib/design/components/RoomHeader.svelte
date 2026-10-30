@@ -1,10 +1,13 @@
 <script lang="ts">
 	import Bell from '@lucide/svelte/icons/bell';
 	import BellOff from '@lucide/svelte/icons/bell-off';
+	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import Ellipsis from '@lucide/svelte/icons/ellipsis';
+	import Link from '@lucide/svelte/icons/link';
 	import Lock from '@lucide/svelte/icons/lock';
 	import LogOut from '@lucide/svelte/icons/log-out';
 	import Pencil from '@lucide/svelte/icons/pencil';
+	import Search from '@lucide/svelte/icons/search';
 	import TextAlignStart from '@lucide/svelte/icons/text-align-start';
 	import Users from '@lucide/svelte/icons/users';
 	import type { ClassValue } from 'svelte/elements';
@@ -71,9 +74,12 @@
 		mutedWithRoom?: boolean;
 		/** A request in flight: Join and the actions menu can't be used. */
 		busy?: boolean;
+		/** Search local history, first in the ⋯ actions menu: it opens a <SearchPanel>. `searchHint` names its shortcut, as the item's hint. */
+		onsearch?: () => void;
+		searchHint?: string;
 		/** The room's or thread's pinned <ThreadDescription> was put away with its ×: a Description button brings it back. */
 		ondescription?: () => void;
-		/** `data-testid`s for its parts: the ‹'s tag of what's new elsewhere, the topic, Join, Description, the bell-off Unmute button, the ⋯ menu and its Edit, Leave, Copy link, Mute and Unmute. */
+		/** `data-testid`s for its parts: the ‹'s tag of what's new elsewhere, the topic, Join, Description, the bell-off Unmute button, the ⋯ menu and its Search, Edit, Leave, Copy link, Mute and Unmute. */
 		tagTestid?: string;
 		topicTestid?: string;
 		joinTestid?: string;
@@ -82,6 +88,7 @@
 		editTestid?: string;
 		leaveTestid?: string;
 		copyLinkTestid?: string;
+		searchTestid?: string;
 		muteTestid?: string;
 		unmuteTestid?: string;
 		unmuteButtonTestid?: string;
@@ -90,8 +97,8 @@
 	}
 	let {
 		room, name, topic, topicTitle, private: isPrivate, faces, typing = [], replies, note, onback, unreadElsewhere = 0, mentionsElsewhere = 0,
-		thread, threadName, onroom, canJoin = false, onjoin, onmemberlist, memberListOpen = false, onedit, onleave, oncopylink, muteChoices, onmute, muted, onunmute, mutedWithRoom = false, busy = false,
-		ondescription, tagTestid, topicTestid, joinTestid, descriptionTestid, actionsTestid, editTestid, leaveTestid, copyLinkTestid, muteTestid, unmuteTestid,
+		thread, threadName, onroom, canJoin = false, onjoin, onmemberlist, memberListOpen = false, onedit, onleave, oncopylink, muteChoices, onmute, muted, onunmute, mutedWithRoom = false, busy = false, onsearch, searchHint,
+		ondescription, tagTestid, topicTestid, joinTestid, descriptionTestid, actionsTestid, editTestid, leaveTestid, copyLinkTestid, searchTestid, muteTestid, unmuteTestid,
 		unmuteButtonTestid, class: className
 	}: Props = $props();
 	const noun = $derived(thread ? 'thread' : 'room');
@@ -110,6 +117,7 @@
 	});
 	/** The occasional actions, in the ⋯ menu: Join stays a button, since it's what a pane read without joining is for. */
 	const actions = $derived<MenuChoice[]>([
+		...(onsearch ? [{ value: 'search', label: 'Search local history', ...(searchHint ? { hint: searchHint } : {}), testid: searchTestid }] : []),
 		...(oncopylink ? [{ value: 'link', label: `Copy link to ${noun}`, testid: copyLinkTestid }] : []),
 		...(muted !== undefined && onunmute ? [{ value: 'unmute', label: `Unmute ${unmuteNoun}`, hint: muted, testid: unmuteTestid }] : []),
 		...(muted === undefined && muteMenu && onmute ? [{ value: 'mute', label: `Mute ${noun}`, testid: muteTestid, choices: muteMenu }] : []),
@@ -119,7 +127,8 @@
 	const memberLabel = $derived(memberListOpen ? 'Hide member list' : 'Show member list');
 
 	function act(value: string): void {
-		if (value === 'link') oncopylink?.();
+		if (value === 'search') onsearch?.();
+		else if (value === 'link') oncopylink?.();
 		else if (value === 'edit') onedit?.();
 		else if (value === 'leave') onleave?.();
 		else if (value === 'unmute') onunmute?.();
@@ -129,8 +138,8 @@
 
 <header class={['ap-roomhead', isPrivate && 'ap-roomhead-private', className]}>
 	{#if onback}
-		<button type="button" class={['ap-roomhead-back', elsewhere > 0 && 'ap-roomhead-back-tagged']} aria-label={backLabel} onclick={onback}>
-			{#if elsewhere > 0}<span class={['ap-roomhead-tag', mentionsElsewhere ? 'ap-roomhead-tag-at' : 'ap-roomhead-tag-quiet']} data-testid={tagTestid} aria-hidden="true">{#if mentionsElsewhere}@&#8239;{/if}{count99(elsewhere)}</span>{:else}‹{/if}
+		<button type="button" class={['ap-iconbtn', 'ap-iconbtn-lg', 'ap-roomhead-back', elsewhere > 0 && 'ap-roomhead-back-tagged']} aria-label={backLabel} onclick={onback}>
+			{#if elsewhere > 0}<span class={['ap-roomhead-tag', mentionsElsewhere ? 'ap-roomhead-tag-at' : 'ap-roomhead-tag-quiet']} data-testid={tagTestid} aria-hidden="true">{#if mentionsElsewhere}@&#8239;{/if}{count99(elsewhere)}</span>{:else}<ChevronLeft size={20} aria-hidden="true" />{/if}
 		</button>
 	{/if}
 	{#if faces?.length && !thread}<Faces people={faces} size="sm" class="ap-roomhead-faces" />{/if}
@@ -175,7 +184,7 @@
 	{#if actions.length > 0}
 		<MenuButton label={thread ? 'Thread actions' : 'Room actions'} buttonTestid={actionsTestid} choices={actions} disabled={busy} onselect={act} bind:open={actionsOpen}>
 			{#snippet icon()}<Ellipsis size={18} strokeWidth={1.8} aria-hidden="true" />{/snippet}
-			{#snippet lead(value)}{#if value === 'edit'}<Pencil size={15} aria-hidden="true" />{:else if value === 'mute'}<BellOff size={15} aria-hidden="true" />{:else if value === 'unmute'}<Bell size={15} aria-hidden="true" />{:else}<LogOut size={15} aria-hidden="true" />{/if}{/snippet}
+			{#snippet lead(value)}{#if value === 'search'}<Search size={15} aria-hidden="true" />{:else if value === 'edit'}<Pencil size={15} aria-hidden="true" />{:else if value === 'mute'}<BellOff size={15} aria-hidden="true" />{:else if value === 'unmute'}<Bell size={15} aria-hidden="true" />{:else if value === 'link'}<Link size={15} aria-hidden="true" />{:else}<LogOut size={15} aria-hidden="true" />{/if}{/snippet}
 		</MenuButton>
 	{/if}
 </header>
