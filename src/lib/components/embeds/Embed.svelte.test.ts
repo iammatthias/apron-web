@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { Embed as EmbedRecord } from '$lib/protocol/types';
 import Embed from './Embed.svelte';
 import { directory } from '$lib/ui/directory.svelte';
+import { mediaSettings } from '$lib/ui/media-settings.svelte';
 import { button, render } from '$lib/test/dom';
 
 /** Renders a server-relayed embed as a message shows it, and returns the box it drew. */
@@ -65,14 +66,14 @@ describe('an iframe embed (§4.8)', () => {
 describe('a link embed with og media (§4.8.1)', () => {
 	afterEach(() => {
 		directory.origin = undefined;
-		directory.mediaOrigins = [];
+		mediaSettings.update('default', []);
 	});
 
 	const link = (og: EmbedRecord['og']): EmbedRecord => ({ kind: 'link', url: 'https://news.example/clip', og: { title: 'The clip', ...og } });
 
 	it('plays media from the server and its named media origins, with the preview image as the poster', () => {
 		directory.origin = 'https://chat.example';
-		directory.mediaOrigins = ['https://media.example'];
+		mediaSettings.update('custom', ['https://media.example']);
 		const box = show(link({ image: { url: 'https://chat.example/f/poster.png' }, video: { url: 'https://media.example/f/clip.mp4', width: 640, height: 360 } }));
 		const video = box.querySelector('video')!;
 		expect([video.getAttribute('src'), video.getAttribute('poster'), video.style.aspectRatio]).toEqual(['https://media.example/f/clip.mp4', 'https://chat.example/f/poster.png', '640 / 360']);
