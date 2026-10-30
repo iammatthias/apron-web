@@ -672,6 +672,81 @@ over the system's, and an installed font for the interface, messages and code
 font choice is marked experimental, to be replaced by a choice of themes. All
 of these stay on this device; settings aren't synced.
 
+**History** keeps what a signed-in session has loaded on this device, for
+**30 days** unless changed (a day, a week, a year, everything loaded, or not at
+all), and with it how far each joined room is caught up. The next visit shows it
+at once and goes on as a reconnect does: each room asks the server only for what
+came after its checkpoint (§4.3.5), and the joined listing only for rooms that
+changed since (`latest_log_id`, §4.2.1); a thread opened again goes on from
+where its last load got to. Each room opens with the newest fifty entries of its
+log (messages, reaction sets and joins and leaves); as
+you scroll back, older pages come from this device first, then from the server
+once what is kept runs out, as messages older than the retention do. The retention counts by when a message
+was logged, on servers whose `log_id`s are times (as the reference servers'
+are); elsewhere everything loaded is kept. A room last caught up before the
+cutoff starts over from its newest page rather than paging through everything
+since (a quiet room saved recently counts as caught up then, however old its
+last message). It is kept only for a session saved here (an account, or a token the
+server resumes), never for a guest, and only in a browser that can list its
+databases (so signing out can find it to delete); signing out removes it, as does choosing
+not to keep any, in any tab: the others stop writing it back, and a retention
+chosen in one tab holds in the others. Each account's history on each server
+is kept apart, in a database of its own: switching to another server, or
+connecting again from the sign-in screen, goes on from what was kept for that
+server in the same way, and leaves the others' as they are. One account's is
+kept per server, as one session is saved: signing in there as another deletes
+the one before. One tab
+writes at a time; another takes over when it closes. Preferences says how much Apron keeps on this device, and why it stopped
+keeping more if the device ran out of space.
+
+**Search local history** (first in the room header's ⋯ menu, or Ctrl+F, ⌘F on a Mac, in place of the browser's find while signed in and no other dialog is open)
+starts narrowed to the open room or thread (`room:#general `, the caret after
+it; Backspace widens it to everywhere), and looks through this server's history kept on this device for the
+account signed in (none as a guest, or while keeping is off) and what the page has
+loaded, as you type: a message matches when its text holds what is typed, as
+one run (in any case, with or without accents, any spaces as one; quotes around
+all of it are dropped). `user:` keeps what someone sent, by
+`@user_id` or name (`user:@ada`, `user:"Ada Lovelace"`), and `room:` what is in
+a room and its threads, by `#room_id` or title (`room:#general`); several of
+one filter keep what matches any of them, and filters alone, without text,
+list everything they keep. Typing a filter's value suggests people for `user:`
+(everyone met) and rooms for `room:` (as the composer's `#` does), below the
+field: ↑ ↓ move, Enter or Tab puts in `@user_id` or `#room_id` and a space, and
+Escape puts the suggestions away. The newest hundred matches are
+listed, newest first, each with its room (a thread's with its room after it),
+sender, time and a line of it with what was found marked; ↑ ↓ and Enter, or a click,
+open one where it is, paging back to it from this device as a link to it does.
+One too far back to reach that way says so. The field's note says what is
+searched: what is kept here, and for how long, or only what is loaded, for a
+session that keeps nothing (a guest, "Don't keep", `/__preview`, `/archive`).
+Its title's "history" links to Preferences at History (over the rooms list,
+on a phone), where what this device keeps is chosen. There is no server search
+in the protocol, so nothing is asked of the server.
+
+**Export** saves what this page has loaded from the server as a `.jsonl` file
+(`apron-<host>-<day>.jsonl`, in the format [ARCHIVE.md](../ARCHIVE.md)
+specifies): the rooms and threads the rooms list shows, the rooms those are
+threads of, and each room's records from the oldest page loaded to its latest,
+compacted as the client keeps them (§4.3.4): each message's latest snapshot,
+each message's reactions, and the join and leave records, with who you are and
+the users as they were, without their statuses. A quoted message from before
+that, or from another room, goes along only as the quote. Threads listed but
+never opened load their newest page first; older messages of a room are in the
+export only once scrolled back to (or restored on this device). **Open an export** opens `/archive` in a new tab, where a
+chosen or dropped export opens in this same app, read-only, against a server in
+the page that serves only that file: it signs in as the export's `you`, as a
+guest who may only read (`ext:permissions` `write: false`), lists its
+rooms and threads as they were joined, pages their history, and refuses
+anything that would change them. The read-only bar says where and when the
+export was saved, and offers no sign-in: the server offers only guests'. Nothing is sent to the exported server and nothing is
+remembered, as in `/__preview`. An export names the sites its images load from
+(the server's origin and those it named for its media), and since a file can
+name any, `/archive` lists them and asks first: **Load images**, or **Open
+without images**. Either way the page is held to **This server only**, whatever
+Media says (until it's changed there): with images, media loads from the sites
+it named and nowhere else; without, from nowhere, so images show as links,
+avatars as initials, and cards without pictures.
+
 With the `command` capability, composer text that starts with one `/` is a command
 ([PROTOCOL.md §4.1](https://github.com/shazow/apron/blob/main/PROTOCOL.md#41-command)): the composer shows a **Command** tag, sets the line in
 monospace, and **Run** replaces **Send**. `/nick` (a `me` request), `/join`,
@@ -750,7 +825,7 @@ open, it lists only that room's joined threads with news (unread replies or
 mentions), in the same rows, so activity there isn't missed; picking one opens
 its room with the thread open, and quiet threads wait until the room is opened.
 Picking the open room again while reading it folds its threads the same way, to
-those with news (not on a phone, where it returns to the room), and its row
+those with news (on a phone the rooms list stays, its › going back to the room), and its row
 shows a small **…** button before its **+** that says the list is cut short; the
 **…**, or picking the room once more, unfolds them. A folded room stays folded as
 you go to other rooms and come back (kept on this device, per account on each
@@ -834,6 +909,27 @@ the open room (which reading would otherwise take away), and the heading shows
 the **…** before its **+**; the **…**, or the heading again, shows them all.
 **Other Rooms** folds alike, to nothing, as its rooms have no news. Each starts
 open and stays as you left it, on this device.
+
+**Rooms** and **Private** list their rooms in an order kept on this device, per
+account on each server, rather than the order a server happens to send them in,
+which may differ from one visit to the next. A room takes the next place the
+first time it's listed, so a new one goes last and nothing you arranged moves.
+Drag a room by its row to another place in its own section: with a mouse it
+lifts once the pointer has moved a few pixels (a click that drifts stays a
+click); on a touch screen hold it for a moment and it
+lifts (a tap still opens it, and a swipe still scrolls). While it's carried
+every room's threads fold away, so the list is just its rooms and the others
+make way for it, and they come back as they were once it's dropped. It keeps to
+its section's column, moving only up and down within the part of the section in
+view, so it lands where it's seen; carried past either end it goes to that end. While a
+room is carried the sidebar scrolls only to bring more of its section into view,
+as the pointer nears the sidebar's top or bottom, never past the section, and
+nothing scrolls under a pointer that isn't near either. A
+drag starts only from the room's own row, not its threads, its **+** or its **…**, and never opens the room. From the
+keyboard, Alt+↑ or Alt+↓ on a room moves it a place (as in the WAI-ARIA
+rearrangeable listbox; its row names the keys as `aria-keyshortcuts`), the keyboard staying on it and the move announced. In a
+folded section a room moves among the ones shown, the hidden ones keeping their
+places. Threads keep their own order, most recently active first.
 
 The sidebar's **Private** section, right below Rooms and above Other Rooms,
 lists every joined top-level private room (`private: true` and no
@@ -1221,8 +1317,16 @@ first, since the server deletes its content. A message's last embed has no (x)
 when there is no text (delete the message instead), nor does an upload still
 being written.
 
-Media in `og` loads only from the chat server's own origin and the origins it
-names with `ext:media`, and stream URLs only from its own origin; links may
+Media loads from where Preferences, under **Media**, says. **Default** is as Apron always has: `og` media only from the chat server's own
+origin and the origins it names with `ext:media`, avatars from any `https:`
+site, and images in markdown messages from any site. **This server only**
+loads all of them only from the server's origins; **This server and sites I
+add** also from the sites listed under it (hosts or URLs, one per line, kept as
+`https:` origins); **Any site** from anywhere. Where an image in a message may
+not load, it shows as a link to it (its alt text, else its URL), an avatar as
+initials, and a card without its picture. Small `data:` images always show.
+The choice is kept on this device, and another tab's applies at once. Stream
+URLs load only from the server's own origin, whatever the choice; links may
 point anywhere `http(s)`.
 
 **Connect to a server…** in the profile editor (the profile bar at the foot of
@@ -1374,8 +1478,9 @@ warns too when refused, without the token.
 A server may let someone only read, such as its guests, and says so in their
 `you` with `write: false` ([EXT.md §7](../EXT.md#7-extpermissions)). Signed in
 as a guest there, the composer gives way to a bar saying so with a **Sign in**
-button (it opens the sign-in panel on Passkey); signed in to an account, the
-bar only says so. Replying, reacting, editing, moving and deleting messages,
+button (it opens the sign-in panel on Passkey); signed in to an account, or as
+a guest on a server whose `auth` offers only `guest` (nothing would lift it,
+as on `/archive`), the bar only says so. Replying, reacting, editing, moving and deleting messages,
 starting threads, editing rooms and threads, adding or removing members, and
 Join and Leave are hidden; a room picked under Other Rooms (which says no
 Join) opens to read through its history without joining it, and Other Threads

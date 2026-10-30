@@ -47,14 +47,16 @@
 		children?: Snippet;
 		/** After the button, where it has no door: the open room's +. */
 		start?: Snippet;
+		/** The keys that act on the row besides picking it, for assistive tech (`aria-keyshortcuts`), such as moving it. */
+		keyshortcuts?: string;
 	}
-	let { room, noun, label, tip, private: isPrivate, muted, active, nested, framed, listed = false, title, onselect, onleave, onjoin, lead, lines, children, start, class: className }: Props = $props();
+	let { room, noun, label, tip, private: isPrivate, muted, active, nested, framed, listed = false, title, onselect, onleave, onjoin, lead, lines, children, start, keyshortcuts, class: className }: Props = $props();
 	const thread = $derived(noun === 'thread');
 </script>
 
 {#snippet row()}
 	<button
-		type="button" aria-current={active ? 'page' : undefined} {title}
+		type="button" aria-current={active ? 'page' : undefined} aria-keyshortcuts={keyshortcuts} {title}
 		data-room={thread || listed ? undefined : room} data-join={!thread && listed ? room : undefined}
 		data-thread={thread && (!listed || active) ? room : undefined} data-other-thread={thread && listed ? room : undefined}
 		class={['ap-room', nested && 'ap-room-nested', active && 'ap-room-active', className]} onclick={onselect}
@@ -70,10 +72,10 @@
 	<div class={['ap-roomrow', nested && 'ap-roomrow-nested', active && 'ap-roomrow-active']}>
 		{@render row()}
 		{#if onleave}
-			<button type="button" class="ap-room-exit" data-leave={room} title="Leave {noun}" aria-label="Leave {label}" onclick={onleave}><DoorOpen size={15} aria-hidden="true" /></button>
+			<button type="button" class="ap-iconbtn ap-room-exit" data-leave={room} title="Leave {noun}" aria-label="Leave {label}" onclick={onleave}><DoorOpen size={15} aria-hidden="true" /></button>
 		{/if}
 		{#if onjoin}
-			<button type="button" class="ap-room-join" data-join={room} title="Join {noun}" aria-label="Join {label}" onclick={onjoin}><LogIn size={15} aria-hidden="true" /></button>
+			<button type="button" class="ap-iconbtn ap-room-join" data-join={room} title="Join {noun}" aria-label="Join {label}" onclick={onjoin}><LogIn size={15} aria-hidden="true" /></button>
 		{/if}
 	</div>
 {:else if start}
