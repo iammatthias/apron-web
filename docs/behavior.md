@@ -615,9 +615,30 @@ On iPhone and iPad Safari outside a Home Screen app, push isn't offered: under
 the Notifications switch, a callout gives the steps to add Apron to the Home
 Screen. Where the browser offers to install Apron (Chromium's
 `beforeinstallprompt`), the client holds that offer back and shows **Install
-app** under the Notifications switch only, never elsewhere, and not once Apron runs installed. The web manifest
+app** under the Notifications switch, and in the install offer below, and not once Apron runs installed. The web manifest
 (`static/manifest.webmanifest`) names Apron, its icons, `start_url` and
 `display: standalone`.
+
+On a phone or tablet not running Apron installed, 20 seconds after the session
+is up, the same kind of prompt as the notifications offer asks "Add Apron to
+your Home Screen?": it opens full screen, like an app, and, on an iPhone or
+iPad signed in where push works, can alert you when it's closed. Where the
+browser offers to install Apron, its **Install** asks the browser (as
+Preferences' **Install app** does, which answers this offer too). Elsewhere
+**Show me how** lists the steps for this browser: Share (in Safari's toolbar or
+its ⋯ menu), Add to Home Screen (under View More if it isn't listed), then Add;
+another iPhone browser's Share by the address, likewise; an Android browser's
+menu, Install app or Add to Home screen; and in an app's own browser
+(Instagram, Facebook and the like), which can't, to open the page in the
+browser first. Under the steps, "Not there? Open this page in Safari first"
+(in your browser, on Android) covers the browsers apps open pages in, which look like
+the browser but have no such menu. **Not now**, **Got it** once the steps
+are read, Escape, or installing answers it, so it isn't offered again on this
+device, in any tab. It never shows with the notifications offer: whichever
+comes first holds the other back until it's answered. It isn't offered where
+Chrome says Apron is installed already (`getInstalledRelatedApps`, the
+manifest naming it in `related_applications`), nor while reading an archive,
+nor on a computer, whose browser offers installing in the address bar.
 
 `push_id` names the account: 12 random bytes in base64url (16 characters),
 made once per account on each server and kept in `apron.pushIds`, so it
@@ -742,10 +763,11 @@ export was saved, and offers no sign-in: the server offers only guests'. Nothing
 remembered, as in `/__preview`. An export names the sites its images load from
 (the server's origin and those it named for its media), and since a file can
 name any, `/archive` lists them and asks first: **Load images**, or **Open
-without images**. Either way the page is held to **This server only**, whatever
-Media says (until it's changed there): with images, media loads from the sites
-it named and nowhere else; without, from nowhere, so images show as links,
-avatars as initials, and cards without pictures.
+without images**. Either way the page is held to the server's own sites,
+whatever Media says (until it's changed there, or Always load is clicked): with
+images, media loads from the sites it named and nowhere else; without, from
+nowhere, so images wait for a click, avatars show as initials, and cards as
+cards without pictures.
 
 With the `command` capability, composer text that starts with one `/` is a command
 ([PROTOCOL.md §4.1](https://github.com/shazow/apron/blob/main/PROTOCOL.md#41-command)): the composer shows a **Command** tag, sets the line in
@@ -1221,7 +1243,9 @@ Embeds render by kind, in the design system's components ([PROTOCOL.md §4.8](ht
 - Any other kind renders from its `og` as a link card, else as the fallback card
   with its kind name and its `url` or `text`. A card whose `og.video` or
   `og.audio` loads plays it in the card, a video with the `og.image` as its
-  poster, and the text under the player is the link to the embed's `url`.
+  poster, and the text under the player is the link to the embed's `url`. A
+  video or audio from a site media may not load from waits for a click, like
+  an image, under the card.
 - **Link previews**: any link in a message is checked against a map of sites
   by host (`SITES` in `link-sites.ts`), and up to three links on those sites
   each get a `link` embed, with an `og` the sender builds from the site's
@@ -1320,14 +1344,26 @@ first, since the server deletes its content. A message's last embed has no (x)
 when there is no text (delete the message instead), nor does an upload still
 being written.
 
-Media loads from where Preferences, under **Media**, says. **Default** is as Apron always has: `og` media only from the chat server's own
-origin and the origins it names with `ext:media`, avatars from any `https:`
-site, and images in markdown messages from any site. **This server only**
-loads all of them only from the server's origins; **This server and sites I
-add** also from the sites listed under it (hosts or URLs, one per line, kept as
-`https:` origins); **Any site** from anywhere. Where an image in a message may
-not load, it shows as a link to it (its alt text, else its URL), an avatar as
-initials, and a card without its picture. Small `data:` images always show.
+Media loads from where Preferences, under **Media**, says. **This server and
+trusted sites**, the default, loads it from the chat server's own origin, the
+origins the server names with `ext:media` (Preferences names them, such as
+`media.apron.chat (trusted by the server)`), and the **Trusted origins** listed
+under it (hosts or URLs, one per line, kept as `https:` origins). **Any site**
+loads it from anywhere; the trusted origins stay listed for when the default is
+chosen again. Earlier versions' choices carry over: Default, This server only and
+This server and sites I add become the default, their sites kept as trusted
+origins, and Any site stays.
+
+Under the default, an image, video or audio from anywhere else in the timeline
+(in a message, an HTML embed, a link preview's card or an upload) waits for a
+click where it would be: its alt text or kind, its site, **Load**, which loads
+that one on this page, and, for an `https:` site, **Always load**, which adds the
+site to the trusted origins. An image in a link waits after the link. A custom
+emoji from anywhere else shows as its key (and isn't offered in the emoji
+picker), an avatar as initials (a server signed in to before, its avatar only
+from its own origin), and a custom emoji catalog on another site isn't fetched.
+An HTML embed never loads a `srcset`, a `background` or a `ping`. Images in a
+message or embed itself (`data:`) always show: they load from nowhere.
 The choice is kept on this device, and another tab's applies at once. Stream
 URLs load only from the server's own origin, whatever the choice; links may
 point anywhere `http(s)`.
