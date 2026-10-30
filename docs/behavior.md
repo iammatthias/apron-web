@@ -1244,8 +1244,8 @@ Embeds render by kind, in the design system's components ([PROTOCOL.md §4.8](ht
   with its kind name and its `url` or `text`. A card whose `og.video` or
   `og.audio` loads plays it in the card, a video with the `og.image` as its
   poster, and the text under the player is the link to the embed's `url`. A
-  video or audio from a site media may not load from waits for a click, like
-  an image, under the card.
+  video or audio that the media settings don't let load waits for a click
+  under the card, as an image does.
 - **Link previews**: any link in a message is checked against a map of sites
   by host (`SITES` in `link-sites.ts`), and up to three links on those sites
   each get a `link` embed, with an `og` the sender builds from the site's
