@@ -36,6 +36,7 @@
 	import InstallPrompt from '$lib/components/InstallPrompt.svelte';
 	import { INSTALL_OFFER_AFTER_MS, installWay, installedAlready } from '$lib/ui/install';
 	import ProfileCard from '$lib/components/ProfileCard.svelte';
+	import ServerPane from '$lib/components/ServerPane.svelte';
 	import ReactorsPopover from '$lib/components/ReactorsPopover.svelte';
 	import StatusBanner from '$lib/design/components/StatusBanner.svelte';
 	import ConnectionNotice from '$lib/components/ConnectionNotice.svelte';
@@ -84,7 +85,7 @@
 	import { mediaAskClick } from '$lib/ui/media-ask';
 	import { mediaSettings } from '$lib/ui/media-settings.svelte';
 	import { preferencesOpener } from '$lib/ui/preferences.svelte';
-	import { buildRoomTimeline, buildThreadTimeline, newDividerBefore, threadEntries, threadStartedFrom, threadDescriptionFor, threadTitleFor } from '$lib/ui/timeline';
+	import { buildRoomTimeline, newDividerBefore, threadEntries, threadStartedFrom, threadDescriptionFor, threadTitleFor } from '$lib/ui/timeline';
 	import { takeSignInLink } from '$lib/ui/sign-in-link';
 	import { SignInLinks } from '$lib/ui/link-controller.svelte';
 	import { findProposal } from '$lib/protocol/proposals';
@@ -294,6 +295,8 @@
 	/** Link previews removed from the composer's draft, by URL. */
 	let composerDismissed = $state<string[]>([]);
 	let connectOpen = $state(false);
+	/** Disconnected from the server pane: the connect screen can't be cancelled back to it. */
+	let disconnected = $state(false);
 	/** The sign-in scheme the connect screen opens with, when something asked for one. */
 	let connectScheme = $state<Scheme | undefined>();
 	let recentServers = $state<RecentServer[]>([]);
@@ -514,12 +517,33 @@
 	// to the tab) shows nothing.
 	$effect(() => checking.set(!session.reconnectQuiet && !session.waitingToReconnect && (paneCatchingUp || quietReconnect)));
 	$effect(() => () => checking.dispose());
+	/**
+	 * Other rooms are still catching up while this one is shown as it is: the room header's thin moving line
+	 * (`updating`), not the pill, since nothing on screen is out of date; once the pill is gone, so the two don't
+	 * show together. Not for rooms held by a history wait, whose recovery fetches nothing until it's over. Through a
+	 * quiet reconnect's first moments, like the pill, nothing.
+	 */
+	let updatingShown = $state(false);
+	const updating = new SettleFlag((on) => (updatingShown = on));
+	$effect(() => updating.set(Boolean(paneRoom) && !paneCatchingUp && !checkingShown && !session.reconnectQuiet && !session.waitingToReconnect && session.rooms.some((room) => room.id !== paneRoom?.id && room.recovering && !room.limited)));
+	$effect(() => () => updating.dispose());
+	/** Older messages load above those shown, reading back: a pill at the top of the timeline says so. */
+	let olderShown = $state(false);
+	/** The room or thread whose older messages the pill is for: switched away from, it doesn't linger over the next. */
+	let olderFor = $state<string | undefined>();
+	const older = new SettleFlag((on) => {
+		olderShown = on;
+		olderFor = on ? olderSource?.id : undefined;
+	});
+	$effect(() => older.set(Boolean(olderSource?.loadingOlder)));
+	let olderLoading = $derived(olderShown && olderFor !== undefined && olderFor === olderSource?.id);
+	$effect(() => () => older.dispose());
 	/** Nothing held to show while the room's threads are listed: placeholders, so its messages and thread cards appear together. */
 	let paneHeldBack = $derived(awaitingThreads && !activeThread && !session.activeRoomHeld);
 	let messages = $derived(timelineMessages(paneRoom));
-	let timeline = $derived(activeThread
-		? buildThreadTimeline({ messages, renames: paneRoom?.renames, notices: paneRoom?.notices })
-		: buildRoomTimeline({ messages, threads, notices: paneRoom?.notices, memberships: paneRoom?.timeline.memberships }));
+	let timeline = $derived(buildRoomTimeline({
+		messages, threads: activeThread ? [] : threads, renames: paneRoom?.renames, notices: paneRoom?.notices, memberships: paneRoom?.timeline.memberships
+	}));
 	let shownTimeline = $derived(reveal.hidden > 0 ? timeline.slice(Math.min(reveal.hidden, timeline.length)) : timeline);
 	/** The pane is live: its room is listed, and no sign-in is under way. */
 	let paneReady = $derived(Boolean(paneRoom && session.ready && !snapshot.authBusy));
@@ -1286,6 +1310,18 @@
 		client.listMembers(room.id, maxAge).catch(() => undefined);
 	}
 
+	/**
+	 * The server pane's Disconnect: whatever belonged to this server goes, the connection closes, and the connect
+	 * screen opens, where connecting again (here, or to another server) is the way back. What was kept for it stays.
+	 */
+	function disconnect(): void {
+		if (!client || previewMode) return;
+		leaveBackend();
+		client.disconnect();
+		disconnected = true;
+		openConnect();
+	}
+
 	/** The connect form was submitted: whatever belonged to the previous backend goes. */
 	function leaveBackend(): void {
 		drafts.open(undefined);
@@ -1522,6 +1558,7 @@
 		if (client) recentServers = rememberServer(recentServers, client.url, currentLook);
 		connectOpen = false;
 		offeringLink = false;
+		disconnected = false;
 	}
 
 	// --- Navigation and drafts ---
@@ -2883,12 +2920,15 @@
 		}
 	}
 
-	/** "Copy log" in select mode: the picked messages, in timeline order, as Markdown (`messageLog`). The selection stays. */
+	/** "Copy to clipboard" in select mode: the picked messages, in timeline order, as Markdown (`messageLog`). Once copied, select mode ends. */
 	async function copySelectionLog(): Promise<boolean> {
 		const picked = messages.filter((event) => selection.has(event.message_id));
 		if (!picked.length) return false;
 		try {
-			await copyRich(messageLog(picked, { lookup: resolveMessage }));
+			const reactions = (event: MessageRecord) => session.rooms.find((room) => room.id === event.room_id)?.timeline.reactions[event.message_id];
+			await copyRich(messageLog(picked, { lookup: resolveMessage, reactions, order: selectableOrder }));
+			selection.cancel();
+			composer?.focus();
 			return true;
 		} catch {
 			feedback.error('Unable to copy the messages');
@@ -3010,7 +3050,7 @@
 {:else if connectOpen}
 	<ConnectScreen
 		{client} {session} bind:serverInput bind:displayName {passkeyUnavailable} {recentServers}
-		canCancel={session.rooms.length > 0 || session.ready || offeringLink} initialScheme={connectScheme}
+		canCancel={!disconnected && (session.rooms.length > 0 || session.ready || offeringLink)} initialScheme={connectScheme}
 		initialError={links.failure?.error}
 		onconnect={leaveBackend} onconnected={connected} oncancel={() => { connectOpen = false; offeringLink = false; if (client) serverInput = client.url; }} onsignout={signedOut}
 	/>
@@ -3050,7 +3090,7 @@
 			notificationsEnabled={notificationsActive} notificationsSupported={notificationState !== 'unsupported'} notificationPermission={notificationState} notifyScopes={notifyScopes} onnotifications={toggleNotifications} onnotifyscopes={setNotifyScopes} ontestnotifications={testNotifications}
 			webPush={webPushKey(session.server) ? { supported: webPushAvailable, homeScreen: !webPushAvailable && needsHomeScreen(), enabled: webPushActive && !webPushHeldBy, ...(webPushHeldBy ? { heldBy: webPushHeldBy } : {}), ...(webPushServerKey ? {} : { signIn: true }), offered: webPushOffered, installable: canOfferInstall(installPrompt), ...(webPushError && webPushServerKey ? { error: webPushError } : {}) } : undefined} onwebpush={pushHere} oninstallapp={installApp}
 			pause={canPause ? { ...(pausedUntil !== undefined && isPaused(pausedUntil) ? { until: pausedUntil } : {}) } : undefined} onpause={pauseNotifications} onresume={() => client?.setMute(false) ?? Promise.resolve()}
-			onconnect={() => openConnect()} onsignin={(name, scheme) => openConnect({ scheme: scheme ?? 'webauthn', name })}
+			onsignin={previewMode ? undefined : (name, scheme) => openConnect(scheme ? { scheme, name } : { signIn: true, name })}
 			returnTo={activeRoom ? (activeThread ? threadTitle(activeThread) : activeRoom.title) : undefined} onreturn={closeRooms}
 			onroom={chooseRoom} onthread={chooseThread} onopenthread={openThreadCard} onjoin={joinRoom} onleavethread={leaveThread} oncreateroom={(roomId, options) => { pendingJoin = roomId; pendingPrivate = options.private; }} onnewthread={newThreadInRoom} onsignout={signedOut}
 			onnewprivate={canStartPrivate ? () => (newPrivateOpen = true) : undefined}
@@ -3076,6 +3116,7 @@
 				replyCount={activeThread ? threadReplyCount : undefined}
 				moreReplies={Boolean(activeThread && threadRoom?.olderAvailable)}
 				waiting={Boolean(historyWait)}
+				updating={updatingShown && !checkingShown}
 				canEdit={canEditPane}
 				editDisabled={!paneReady}
 				canLeave={session.canManageRooms && !session.readOnly && Boolean(paneRoom?.joined)}
@@ -3121,8 +3162,10 @@
 				{/key}
 			{/if}
 
+			<!-- Outside the log, so it's announced once as a status rather than as an entry each time older messages load. -->
+			{#if olderLoading}<TimelineLoading top label={activeThread ? 'Loading earlier replies…' : 'Loading earlier messages…'} />{/if}
 			<div class="ap-timeline" bind:this={messageScroll} onscroll={trackScroll} data-testid="message-list" role="log" aria-live="polite" aria-label={`${activeThread ? threadTitle(activeThread) : activeRoom.title} messages`}>
-				<FloatingDayPill label={floatingDay.label} shown={floatingDay.shown} testid="floating-day" />
+				<FloatingDayPill label={floatingDay.label} shown={floatingDay.shown && !olderLoading} testid="floating-day" />
 				{#if snapshot.showReconnectDivider}
 					<TimelineDivider kind="gap" testid="reconnect-divider" />
 				{/if}
@@ -3145,7 +3188,8 @@
 						{:else if item.kind === 'members'}
 							<MembershipLine joined={item.joined} left={item.left} logId={item.logId} />
 						{:else if item.kind === 'renamed'}
-							<SystemLine timestamp={idMillis(item.logId)} timelineItem testid="thread-renamed">{#if item.title}Thread renamed to <span class="ap-msg-text">“{item.title}”</span>{:else}Thread name cleared{/if}</SystemLine>
+							{@const what = activeThread ? 'Thread' : 'Room'}
+							<SystemLine timestamp={idMillis(item.logId)} timelineItem testid={activeThread ? 'thread-renamed' : 'room-renamed'}>{#if item.title}{what} renamed to <span class="ap-msg-text">“{item.title}”</span>{:else}{what} name cleared{/if}</SystemLine>
 						{:else}
 							{@const event = item.event}
 							{@const view = messageView(event, {
@@ -3251,6 +3295,7 @@
 		<NewPrivateDialog client={client!} {session} enabled={canStartPrivate} onnamed={(roomId) => arrivals.mine(roomId)} onopen={openPrivateRoom} onclose={() => (newPrivateOpen = false)} />
 	{/if}
 	<!-- Popovers over the whole page, outside the member list: they open from messages too, and must show while it's shut. -->
+	<ServerPane {client} {session} onnewserver={previewMode ? undefined : () => openConnect()} ondisconnect={previewMode ? undefined : disconnect} />
 	<ProfileCard {client} {session} room={paneRoom} canChange={canAddMembers} canMention={Boolean(composer) && canCompose && !selection.active} canMessage={canStartPrivate} onmention={(userId) => composer?.mention(userId)} onnamed={(roomId) => arrivals.mine(roomId)} onopenroom={openPrivateRoom} />
 	<ReactorsPopover />
 	<!-- While reconnecting, the banner at the top already says what went wrong (statusLabel). -->
