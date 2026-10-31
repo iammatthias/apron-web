@@ -96,7 +96,7 @@ describe('a link embed with og media (§4.8.1)', () => {
 		const box = show(link({ video: { url: 'https://tracker.example/clip.mp4' }, audio: { url: 'https://tracker.example/song.mp3' } }));
 		expect(box.querySelector('video, audio')).toBeNull();
 		expect(box.querySelector('a')!.getAttribute('href')).toBe('https://news.example/clip');
-		expect(box.querySelector('.ap-media-ask-label')?.textContent).toBe('Video tracker.example');
+		expect(box.querySelector('.ap-media-ask-label')?.textContent).toBe('Video https://tracker.example/clip.mp4');
 		button('Load Video from tracker.example', box).click();
 		flushSync();
 		expect(box.querySelector('video')!.getAttribute('src')).toBe('https://tracker.example/clip.mp4');

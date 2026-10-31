@@ -62,17 +62,17 @@ describe('EmbedCard', () => {
 
 	it('waits for a click on a video that may not play, keeping its image, and is no player until it loads', () => {
 		const onload = vi.fn();
-		render(EmbedCard, { kind: 'link', url: 'https://news.example/clip', testid: 'card', og: { title: 'The clip', image: { url: media('https://chat.example/p.png') }, video: { width: 640, height: 360, ask: { host: 'cdn.example', onload } } } });
+		render(EmbedCard, { kind: 'link', url: 'https://news.example/clip', testid: 'card', og: { title: 'The clip', image: { url: media('https://chat.example/p.png') }, video: { width: 640, height: 360, ask: { url: 'https://cdn.example/clip.mp4', host: 'cdn.example', onload } } } });
 		const held = document.querySelector('[data-testid="card"]')!;
 		expect([held.classList.contains('ap-embed-held'), held.querySelector('video, audio'), held.querySelector('img.ap-embed-ogimg')?.getAttribute('src'), held.querySelector('a')?.getAttribute('href')]).toEqual([true, null, 'https://chat.example/p.png', 'https://news.example/clip']);
-		expect(document.querySelector('.ap-media-ask-label')?.textContent).toBe('Video cdn.example');
+		expect(document.querySelector('.ap-media-ask-label')?.textContent).toBe('Video https://cdn.example/clip.mp4');
 		document.querySelector<HTMLButtonElement>('[aria-label="Load Video from cdn.example"]')!.click();
 		expect(onload).toHaveBeenCalledOnce();
 	});
 
 	it('asks for an og.audio that may not play before an image that may not show', () => {
-		render(EmbedCard, { kind: 'link', url: 'https://news.example/song', og: { image: { ask: { host: 'img.example', onload: vi.fn() } }, audio: { ask: { host: 'cdn.example', onload: vi.fn() } } } });
-		expect([document.querySelector('audio'), document.querySelector('.ap-media-ask-label')?.textContent]).toEqual([null, 'Audio cdn.example']);
+		render(EmbedCard, { kind: 'link', url: 'https://news.example/song', og: { image: { ask: { url: 'https://img.example/cover.png', host: 'img.example', onload: vi.fn() } }, audio: { ask: { url: 'https://cdn.example/song.mp3', host: 'cdn.example', onload: vi.fn() } } } });
+		expect([document.querySelector('audio'), document.querySelector('.ap-media-ask-label')?.textContent]).toEqual([null, 'Audio https://cdn.example/song.mp3']);
 	});
 });
 
