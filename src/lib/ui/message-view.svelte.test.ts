@@ -287,6 +287,19 @@ describe('messageView', () => {
 	});
 });
 
+describe('messageView read receipts', () => {
+	it('keeps the same view while its receipts are the same array, and makes a new one when they change', () => {
+		const event = messageRecord(1710000000500);
+		const faces = [{ user_id: 'bob', name: 'Bob' }];
+		const first = messageView(event, row({ seenBy: faces }), context());
+		expect(first.seenBy).toBe(faces);
+		expect(messageView(event, row({ seenBy: faces }), context())).toBe(first);
+		const moved = messageView(event, row({ seenBy: [{ user_id: 'cy' }] }), context());
+		expect(moved).not.toBe(first);
+		expect(messageView(event, row(), context())).not.toHaveProperty('seenBy');
+	});
+});
+
 describe('a message with live text appended (§4.8.5)', () => {
 	/** `GET url`'s response, written by the test as bytes; every request is counted. */
 	function serve() {
@@ -338,6 +351,33 @@ describe('a message with live text appended (§4.8.5)', () => {
 			// Ended: shown as written, no longer settled, and no Writing… while the snapshot that finishes it is on its way.
 			await vi.waitFor(() => expect(last().writing).toBeUndefined());
 			expect(last().body?.html).toContain('then **renew the cert');
+		} finally {
+			stop();
+		}
+	});
+
+	it('shows the text after its edits: a backspace and a form feed revise only the streamed text, never body.text', async () => {
+		const server = serve();
+		const event = append('https://chat.example/a/4', 'Plan:');
+		const { views, stop } = follow(event);
+		try {
+			const last = () => views.at(-1)!;
+			await vi.waitFor(() => expect(server.urls).toEqual(['https://chat.example/a/4']));
+			server.push(' roll bakc');
+			await vi.waitFor(() => expect(last().body?.html).toContain('Plan: roll bakc'));
+			server.push('\b\bck the **index');
+			await vi.waitFor(() => expect(last().body?.html).toContain('Plan: roll back the <strong>index</strong>'));
+			// More backspaces than the streamed text has: it is gone, and the body as recorded shows whole.
+			server.push('\b'.repeat(40));
+			await vi.waitFor(() => expect(last().body?.html).not.toContain('roll'));
+			expect(last().body?.html).toContain('<p>Plan:</p>');
+			server.push(' draft\f renew the *cert*');
+			await vi.waitFor(() => expect(last().body?.html).toContain('<p>Plan: renew the <em>cert</em></p>'));
+			expect(last().body?.html).not.toContain('draft');
+			server.end();
+			await vi.waitFor(() => expect(last().writing).toBeUndefined());
+			expect(last().body?.html).toContain('<p>Plan: renew the <em>cert</em></p>');
+			expect(event.body?.text).toBe('Plan:');
 		} finally {
 			stop();
 		}
