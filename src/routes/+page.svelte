@@ -58,6 +58,7 @@
 	import { backendHost, statusLabel } from '$lib/ui/connection';
 	import { directory } from '$lib/ui/directory.svelte';
 	import { FeedbackState, type Feedback } from '$lib/ui/feedback.svelte';
+	import type { LiveComposer } from '$lib/ui/live-composer.svelte';
 	import { prepareUpload } from '$lib/ui/images';
 	import { MentionTracker } from '$lib/ui/mentions.svelte';
 	import { IncomingMessageTracker } from '$lib/ui/incoming-messages';
@@ -576,8 +577,14 @@
 	let paneSteady = $derived(Boolean(paneRoom && session.steady && !snapshot.authBusy));
 	/** Writing here: posting, replying, reacting, and editing threads. A guest who only reads can't. */
 	let canCompose = $derived(paneReady && !session.readOnly);
+	/** Live typing (`/live`), loaded the first time it is used: see `startLive`. */
+	let liveComposer = $state.raw<LiveComposer | undefined>();
+	/** The same, read where typing reads it: not reactive, so that typing reads nothing of it until it loads. */
+	let liveLoaded: LiveComposer | undefined;
+	/** The open pane's draft is a live message. */
+	let composingLive = $derived(liveComposer?.composing ?? false);
 	/** Files dropped on the conversation or pasted outside the field attach to the draft while the composer is showing. */
-	let canAttach = $derived(paneSteady && !session.readOnly && session.capabilities['embed:upload'] && !selection.active);
+	let canAttach = $derived(paneSteady && !session.readOnly && session.capabilities['embed:upload'] && !selection.active && !composingLive);
 	/** Files are being dragged over the conversation. */
 	let dropping = $state(false);
 	/** Files dropped on the conversation pane's `<main>`. */
@@ -2052,6 +2059,8 @@
 	function composerInput(): void {
 		if (!client || !paneRoom) return;
 		drafts.saveText();
+		// A live message shows itself as it is typed: no typing indicator besides.
+		if (liveLoaded?.composing) return;
 		const roomId = paneRoom.id;
 		client.sendTyping(roomId, true);
 		if (typingTimer) clearTimeout(typingTimer);
@@ -2068,6 +2077,16 @@
 	 */
 	function sendMessage(): void {
 		if (!client || !paneRoom || !canCompose) return;
+		if (composingLive) {
+			liveComposer?.send();
+			composer?.focus();
+			return;
+		}
+		// `/live` starts with an empty composer: files staged first would wait unseen, so they go or stay first.
+		if (drafts.files.length && snapshot.capabilities['embed:append'] && /^\/live\s*$/i.test(drafts.text)) {
+			feedback.error('Send or remove the attached files before typing live');
+			return;
+		}
 		// Sending waits as the server asked, files or not (the client holds back any message meanwhile): Send
 		// counts down, the draft and its files stay, and nothing goes by itself. A notice put away shows again.
 		if (sendWait && sendWait.until > Date.now()) {
@@ -2090,7 +2109,11 @@
 		const originKey = draftKey(roomId);
 		const mentions = composerMentions;
 		const dismissed = composerDismissed;
-		const action = composerAction(draft, { command: snapshot.capabilities.command, rooms: session.canManageRooms, members: !snapshot.memberChangesUnsupported }, mentions);
+		const action = composerAction(draft, { command: snapshot.capabilities.command, rooms: session.canManageRooms, members: !snapshot.memberChangesUnsupported, append: snapshot.capabilities['embed:append'] }, mentions);
+		if (action.kind === 'live') {
+			startLive(chat, paneRoom, reply);
+			return;
+		}
 		// A draft given back keeps the link previews that were removed from it.
 		const restore = () => {
 			if (!drafts.restore(originKey, draft, reply)) return;
@@ -2146,6 +2169,35 @@
 		chat.sendTyping(roomId, false);
 		if (typingTimer) clearTimeout(typingTimer);
 		composer?.focus();
+	}
+
+	/**
+	 * `/live` (capability `embed:append`): the composer types the next message live (`LiveComposer`, loaded on demand,
+	 * so the composer costs nothing more until then).
+	 */
+	function startLive(chat: ChatClient, room: RoomSnapshot, reply: string | undefined): void {
+		const key = draftKey(room.id);
+		import('$lib/ui/live-composer.svelte').then(({ LiveComposer }) => {
+			if (client !== chat || !paneRoom || draftKey(paneRoom.id) !== key) return;
+			liveComposer ??= liveLoaded = new LiveComposer({
+				client: () => client,
+				paneKey: () => (paneRoom ? draftKey(paneRoom.id) : undefined),
+				draft: () => ({ text: drafts.text, mentions: composerMentions, reply: drafts.reply }),
+				canEdit: () => session.canEdit,
+				forget: (forgotten) => drafts.forget(forgotten),
+				restore: (restored, text, replyTo) => {
+					if (drafts.restore(restored, text, replyTo)) composer?.focus();
+				},
+				started: () => {
+					if (typingTimer) clearTimeout(typingTimer);
+					stickToBottom = true;
+					pins++;
+					composer?.focus();
+				},
+				error: (cause, fallback) => feedback.error(cause, fallback)
+			});
+			liveComposer.start(chat, room.id, key, reply, joinFirst(chat, room));
+		}, (cause: unknown) => feedback.error(cause, 'Unable to start live typing'));
 	}
 
 	/** `/join`: a room you're in opens; another, found by ID or title among those listed, is joined and opens once it arrives. */
@@ -2514,7 +2566,7 @@
 	// --- Message rows ---
 
 	/** The test ids interop finds a message's parts by. */
-	const MESSAGE_TESTIDS: MessageTestids = { handle: 'sender-handle', reply: 'reply-reference', reactions: 'reactions', chip: 'reaction-chip', select: 'select-message', writing: 'message-writing', receipts: 'read-receipts' };
+	const MESSAGE_TESTIDS: MessageTestids = { handle: 'sender-handle', reply: 'reply-reference', reactions: 'reactions', chip: 'reaction-chip', select: 'select-message', writing: 'message-writing', waiting: 'message-waiting', receipts: 'read-receipts' };
 
 	/** What every row reads from, each field only where a row needs it. */
 	const messageContext: MessageContext = {
@@ -2718,7 +2770,9 @@
 		// pins again, and setting the scroll top there would snap the bounce back under the finger every frame.
 		const end = messageScroll.scrollHeight - messageScroll.clientHeight;
 		if (messageScroll.scrollTop < end - 1) messageScroll.scrollTop = messageScroll.scrollHeight;
-		lastScrollTop = messageScroll.scrollTop;
+		// Held at the end, not wherever within a pixel of it the list sits: what a slow drag moved
+		// it short of the end so far still counts toward letting go (trackScroll).
+		lastScrollTop = end;
 	}
 
 	/** Takes you to the oldest mention that arrived while you were reading back. */
@@ -2729,24 +2783,37 @@
 	}
 
 	function trackScroll(): void {
-		if (!messageScroll) return;
-		const top = messageScroll.scrollTop;
-		const scrolledUp = lastScrollTop === undefined || top < lastScrollTop - 1;
-		lastScrollTop = top;
+		const scroller = messageScroll;
+		if (!scroller) return;
+		const pinned = stickToBottom;
+		const top = scroller.scrollTop;
+		let scrolledUp = true;
 		// While pinned, only the reader scrolling up lets go. The pane grows under us as a room's
 		// history, its threads' cards and long messages lay out; our own scroll's event can land
 		// after that, and scroll anchoring moves the list down, before the next frame catches up.
-		if (stickToBottom && !scrolledUp) {
+		// Up is measured from where the pane was last held, not from the last event: a slow drag
+		// (on iOS, a third of a pixel at a time) moves less than a pixel between events, each step
+		// too small to count, and pinning back after each would hold it until the drag gathered
+		// speed. Held no further down than the end as it is now, so bouncing back out of iOS's
+		// rubber band below the latest isn't read as scrolling up, nor is the list shrinking under it.
+		if (pinned && lastScrollTop !== undefined) {
+			const end = scroller.scrollHeight - scroller.clientHeight;
+			const held = Math.min(lastScrollTop, end);
+			scrolledUp = top < held - 1;
+			lastScrollTop = Math.min(Math.max(top, held), end);
+		} else lastScrollTop = top;
+		if (pinned && !scrolledUp) {
+			// Unless the reader has gone on up by then: a drag can move the list again before this frame.
 			requestAnimationFrame(() => {
-				if (stickToBottom) scrollToLatest();
+				if (stickToBottom && messageScroll && lastScrollTop !== undefined && messageScroll.scrollTop >= lastScrollTop - 1) scrollToLatest();
 			});
 			return;
 		}
-		const atBottom = atLatest(messageScroll);
+		const atBottom = atLatest(scroller);
 		if (top < OLDER_REPLIES_MARGIN_PX) void loadOlderReplies();
-		if (!atBottom && stickToBottom) seenThrough = messages[messages.length - 1]?.message_id;
+		if (!atBottom && pinned) seenThrough = messages[messages.length - 1]?.message_id;
 		stickToBottom = atBottom;
-		floatingDay.update(messageScroll, atBottom);
+		floatingDay.update(scroller, atBottom);
 	}
 
 	/**
@@ -3331,7 +3398,8 @@
 					placeholder={activeThread ? `Reply in ${threadTitle(activeThread)}` : `Message ${activeRoom.title}`}
 					disabled={!paneSteady || session.readOnly}
 					holdSend={!canCompose}
-					canUpload={session.capabilities['embed:upload']}
+					canUpload={session.capabilities['embed:upload'] && !composingLive}
+					live={composingLive}
 					uploadLimits={serverMedia(session.server).upload}
 					canCommand={session.capabilities.command}
 					{people}
