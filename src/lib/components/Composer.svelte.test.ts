@@ -27,4 +27,36 @@ describe('Composer', () => {
 		dom.press(live.field, 'Enter');
 		expect(live.onsend).toHaveBeenCalledOnce();
 	});
+
+	it('Escape while replying cancels the reply; without one it does nothing of the composer\'s', () => {
+		const oncancelreply = vi.fn();
+		const replying = render({ reply: { name: 'Ada', text: 'Lunch?' }, oncancelreply });
+		expect(dom.press(replying.field, 'Escape')).toBe(false);
+		expect(oncancelreply).toHaveBeenCalledOnce();
+		dom.unmount();
+
+		const plain = render({ oncancelreply });
+		expect(dom.press(plain.field, 'Escape')).toBe(true);
+		expect(oncancelreply).toHaveBeenCalledOnce();
+	});
+
+	it('↑ in the empty field goes up to the messages, and leaves the key alone with a draft, a modifier or none to go to', () => {
+		const onup = vi.fn(() => true);
+		const empty = render({ value: '', onup });
+		expect(dom.press(empty.field, 'ArrowUp', { shiftKey: true })).toBe(true);
+		expect(onup).not.toHaveBeenCalled();
+		expect(dom.press(empty.field, 'ArrowUp')).toBe(false);
+		expect(onup).toHaveBeenCalledOnce();
+		dom.unmount();
+
+		// A draft keeps ↑ for moving the caret.
+		const drafted = render({ onup });
+		expect(dom.press(drafted.field, 'ArrowUp')).toBe(true);
+		expect(onup).toHaveBeenCalledOnce();
+		dom.unmount();
+
+		// No messages to go to: the key is the field's.
+		const none = render({ value: '', onup: () => false });
+		expect(dom.press(none.field, 'ArrowUp')).toBe(true);
+	});
 });

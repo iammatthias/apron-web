@@ -53,12 +53,31 @@ one ping, and a socket that hears nothing back (a `pong`, or any other frame)
 within 5 seconds is replaced as if it had closed, rather than looking connected
 for up to a whole ping interval after a laptop slept. For 3 minutes after a
 check replaced a socket, the next waits 30 seconds instead, so a slow network
-that outlasts 5 seconds isn't met with one new connection after another. An explicit server retry window takes precedence, including a
+that outlasts 5 seconds isn't met with one new connection after another.
+Back after a minute or more away, or with the network back, a check that
+hears nothing within 2 seconds also opens a second connection beside the
+first, which sends nothing (none within 3 minutes of a socket replaced for
+staying quiet, so a flaky network has one connection at a time): if the first
+answers, the second closes unused; if the second's greeting arrives first (a
+whole handshake before one ping's answer), the first is gone, and the second
+takes over at once with its handshake already done, as it does when the check
+runs out (the client then running, shown and online, with no wait or hold
+from the server, which also keep any from opening). A new connection gets 10 seconds to open and bring the server's
+`server` frame, or it is dropped as if it had failed and the next tried
+(browsers put no limit on a handshake, and one sent into a network that went
+away waits out the system's connect timeout, a minute or more, showing
+**Still trying to reconnect…** all the while); for 3 minutes after one was
+dropped for staying quiet, the next gets 30 seconds. One still opening when
+the network comes back, or when the page is shown again after its 10 seconds
+ran out while hidden, is replaced at once, the next connection opening then
+rather than after the backoff; the network back between attempts also
+connects at once, and starts the backoff over. An explicit server retry window takes precedence, including a
 `retry_after` error about the connection as a whole (`data.retry_after`
 seconds); after such a `denied` error the client stops reconnecting, shows
 **Signed out** with the server's message, and waits for **Sign in**.
-When a newer version of the client is deployed (SvelteKit's version poll, or a
-lazily loaded file the deploy removed), a notice at the top offers **Reload**
+When a newer version of the client is deployed (SvelteKit's version poll every
+5 minutes, at once on coming back after 5 minutes or more away, or a lazily
+loaded file the deploy removed), a notice at the top offers **Reload**
 or **Later**; it never reloads by itself. Drafts live only in memory, so while
 any room or thread has unsent text or files it adds that reloading clears your
 unsent message.
@@ -394,6 +413,21 @@ Shift+Enter; the Send button sends. Where an autocomplete below offers Enter
 to pick, it picks either way. Pressing Send leaves the focus in the
 field, so a phone's keyboard stays up between messages. However long the
 room or thread's name, the field's placeholder takes one line, cut short.
+With a keyboard, ↑ in the empty field (nothing typed or attached) moves the keyboard up to the messages, onto the
+newest (below); with text in the field, ↑ moves the caret as usual, and an open autocomplete takes it first. Escape while
+replying cancels the reply and keeps the draft (with an autocomplete open, Escape
+puts that away first).
+
+**Keyboard shortcuts**: `?` (outside a field, where it is a character), or
+Ctrl+/ (⌘/ on a Mac; with Shift too, where `/` is a shifted key) anywhere, lists the keyboard shortcuts worth learning (not the keys every app has, such as Enter to send, Esc to
+close, or the arrows in a list, though they work too) in a centered
+dialog, grouped (General, Composer, Messages, Rooms), each with where
+it works and its keys as this platform writes them (⌘ ⌥ ⇧ on a Mac, Ctrl, Alt,
+Shift elsewhere), and named in words for a screen reader. It opens while signed
+in, off the connect screen, and with no other dialog open; Escape (which leaves a selection as it was), its close button or a click beside it
+closes it. The room header's ⋯ menu offers it too (**Keyboard shortcuts**, its
+hint `?`), except on a touch screen. `lib/ui/shortcuts.ts` is the list: a new
+shortcut goes there too.
 
 The timeline is anchored at its bottom edge. When the area below it grows or
 shrinks (the composer taking another line, a reply bar, staged files, the
@@ -435,7 +469,8 @@ author typed, and IDs, tokens and URLs are never changed. Times and days, as
 the browser's locale writes them, keep their own direction too, so under a
 right-to-left layout an English time still reads "3:42 PM". A rendered body (plain or CommonMark, never inside
 code) shows a known user's `@user_id` as a chip with their current name, a known room's
-`#room_id` as a link showing its title that opens the room (or joins it), and unknown
+`#room_id` as a link showing its title that opens the room (one you haven't joined, to read without joining, as picking it under
+Other Rooms does; or, when the client knows nothing of it, joins it), and unknown
 IDs as written ([PROTOCOL.md Appendix A.3](https://github.com/shazow/apron/blob/main/PROTOCOL.md#a3-prefixes-in-text)): `@` names only users. The ID after
 `@` or `#` is the longest run of letters, digits and `_.+@:-` that starts and
 ends with a letter, a digit or `_`, so `@ada@example.com` and
@@ -799,7 +834,7 @@ the one before. One tab
 writes at a time; another takes over when it closes. Preferences says how much Apron keeps on this device, and why it stopped
 keeping more if the device ran out of space.
 
-**Search local history** (first in the room header's ⋯ menu, or Ctrl+F, ⌘F on a Mac, in place of the browser's find while signed in and no other dialog is open)
+**Search local history** (first in the room header's ⋯ menu, or Ctrl+F, ⌘F on a Mac, in place of the browser's find while signed in and no other dialog is open, or its Messages switch in Go to a Room or Thread)
 starts narrowed to the open room or thread (`room:#general `, the caret after
 it; Backspace widens it to everywhere), and looks through this server's history kept on this device for the
 account signed in (none as a guest, or while keeping is off) and what the page has
@@ -821,7 +856,40 @@ searched: what is kept here, and for how long, or only what is loaded, for a
 session that keeps nothing (a guest, "Don't keep", `/__preview`, `/archive`).
 Its title's "history" links to Preferences at History (over the rooms list,
 on a phone), where what this device keeps is chosen. There is no server search
-in the protocol, so nothing is asked of the server.
+in the protocol, so nothing is asked of the server until **Load More from
+Server**, after the results: it loads a page of older history in each of the ten
+most recently active rooms searched that have one (those `room:` names, with
+their threads, else every room and thread you've joined; a thread not opened
+yet loads its newest page), and searches again, now with them. Pressed again it
+goes a page further back. Once none has more, it says everything the server has
+there is loaded.
+
+**Go to a Room or Thread** (Ctrl+K, ⌘K on a Mac, as Search local history opens,
+or its Rooms and Threads switch; Ctrl/⌘F and Ctrl/⌘K switch between the two in
+it, keeping what's typed) finds rooms and threads by name among those the page
+knows of: the ones you've joined, which the server lists in full, threads
+included (§4.2.1), however long ago they were active and whether or not the rooms
+list shows them; those open without joining; those Other Rooms and each room's
+Other Threads last listed; and those whose records this device keeps (a private
+room you left isn't, since it can't be read). A name matches in any case and
+with or without accents: the whole title or `room_id` first, then the start of
+one, the start of a word in the title, anywhere in it, and then the
+description. The ones you've joined come first, under Joined, then those you
+haven't, under Not joined, each then by how well it matches and then by when it
+was last active; with nothing typed it lists them all that way, at most fifty.
+Each row has a # for a room or a hooked arrow for a thread, its title with what
+matched marked (a lock if private), a thread's room or else what the room is
+about, the day it was last active, and what's new in it as the rooms list counts
+it, or Not joined. `room:` (suggested as in Search local history) narrows it to
+the threads of that room, and → at the end of the field on a room does the
+same, putting in `room:#room_id `; Backspace there takes the filter away again.
+Enter or a click opens it: one you've joined, or open, as a mention of it does;
+any other read without joining, under its room if it's a thread, as a link to it
+does, with Join in its header. **Search the Server**, after the results, lists
+the rooms to join again, and the threads of the room `room:` names or else the
+open room's, fresh (`room_list`, two requests); a server lists only its most
+recently active rooms to join, so the note says those it didn't list aren't
+found. The protocol has no way to ask for older ones or to search by name.
 
 **Export** saves what this page has loaded from the server as a `.jsonl` file
 (`apron-<host>-<day>.jsonl`, in the format [ARCHIVE.md](../ARCHIVE.md)
@@ -1093,6 +1161,14 @@ rearrangeable listbox; its row names the keys as `aria-keyshortcuts`), the keybo
 folded section a room moves among the ones shown, the hidden ones keeping their
 places. Threads keep their own order, most recently active first.
 
+Alt+↑ or Alt+↓ anywhere else (⌥ on a Mac; from the composer too, but not another field or a dialog) opens the room or
+thread above or below the open one in the list, as drawn: the joined rooms and threads, threads under their room, a
+folded section's hidden rooms passed over. The rows listed to join are among them (Other Threads, Other Rooms), and
+open to read without joining, as clicking them does: a key that steps never joins every room it passes. It
+stops at either end, and opens each as picking its row does, the composer (where there is one) taking the keyboard. With Shift too it opens the next room that way, past any
+threads (from a thread, going up opens the room it's under), joined or listed to join. With nowhere to go (an end of the list) the
+keys do what they would anyway, such as a Mac's ⌥↑ moving the caret in the composer. Not over the connect screen.
+
 The sidebar's **Private** section, right below Rooms and above Other Rooms,
 lists every joined top-level private room (`private: true` and no
 `parent_room_id`, [PROTOCOL.md §4.2.4](https://github.com/shazow/apron/blob/main/PROTOCOL.md#424-creating-and-editing)):
@@ -1227,10 +1303,14 @@ server that keeps you in a room answers `denied`, and its message shows as
 the error.
 **Other Rooms** in the sidebar lists, via `room_list` with
 `filter: "not_joined"`, the most active visible rooms you haven't joined, each
-with its member count and **Join**. It starts open, so a newcomer sees what
+with its member count. It starts open, so a newcomer sees what
 else there is without looking for it, and folds as the other sections do;
 unfolding it lists afresh.
-Picking one joins it and opens it once its `room_update` arrives.
+Picking one opens it to read through its history (§4.3) without joining it, since joining shows in it for everyone:
+its row shows it open, its threads are listed under it to read too, and the header has **Join**, the primary
+button beside its ⋯ menu, which joins it (`room_join`), as posting there does first. Until then it doesn't
+deliver live (§3.4); Join makes it live and lists it with your rooms, keeping what was read (older pages
+scrolled back through too) and catching up only on what came since, rather than starting over from its newest page.
 
 With the `edit` capability, several messages move at a time: shift-click a
 message (or press `x` on it, or pick **Select** from its More menu) to enter select mode, shift-click another to fill the range, and the
@@ -1258,6 +1338,26 @@ with their `user_id`, §4.2.2), where you may add people: in a private room's
 thread, or where the server grants you `add_members` (or lacks `ext:permissions`). The server
 decides each (it adds no guests); the moves stand either way, and the toast says
 how many authors weren't added and why. Escape leaves select mode.
+
+**The keyboard among the messages.** ↑ in the empty composer, or ↑ or ↓ with nothing focused (as a guest who only
+reads starts, with no composer), puts the keyboard on the newest message (its row outlined, its toolbar showing, as on
+hover); from there ↑ and ↓ go from message to message, Home and End to the
+oldest and newest drawn, and Page Up and Page Down a paneful at a time, keeping it in view. They go past system lines
+and notices, which have nothing to act on, and thread cards. ↑ at the oldest draws the rest of what's loaded, then
+loads older messages, as scrolling back does. ↓ at the newest, or Escape, gives the keyboard back to the composer
+(in select mode Escape ends it instead); without a composer, Escape takes the keyboard off the messages. On a message, `r` replies to it and `e` edits it when it is yours, as their
+toolbar buttons do, and Enter goes into its toolbar, where Escape comes back to the row; an edit opened on the message
+(`e`, or its **Edit**) gives the keyboard back to its row when it ends. → goes into its links and buttons (its
+toolbar's among them, the letter of each one's key, R in Reply and E in Edit, boxed while the keyboard is there), ← →
+go through them and Escape comes back to the row. Shift+↑ and Shift+↓ start select mode with the message, or go on
+with it, picking every message from where the run began to the one the keyboard moves to (stepping back gives them up
+again), as a shift-click fills a range. The timeline is a single Tab stop: Tab into it (from the header, or Shift+Tab
+from the composer) lands on the item the keyboard was last on, else the newest message, and Tab on it goes past the
+whole timeline; a thread's card, or anything else between the messages that takes the keyboard, is an item ↑ ↓ stop
+at. Neither `r` nor `e` does anything in select
+mode, while it is being edited, or in a field (where they are letters), nor with Ctrl, Alt or ⌘. Clicking a message
+puts the keyboard on it too. Messages arriving leave the keyboard where it is, and opening another room or thread
+gives it back to the composer.
 
 A reply's quote is one line above the sender's name (the quoted sender's
 avatar and name, then the start of their message), with a line from the
@@ -1583,8 +1683,10 @@ being written.
 
 Media loads from where Preferences, under **Media**, says. **Server and
 trusted sites**, the default, loads it from the chat server's own origin, the
-origins the server names with `ext:media` (named above the **Trusted
-origins** field, as "Includes origins trusted by the server: media.apron.chat"),
+origin this app was loaded from (where a server's avatar can be the app's icon,
+and which loading from tells no one anything new), the origins the server names
+with `ext:media` (both named above the **Trusted origins** field, as "Includes
+origins trusted by this app and the server: web.apron.chat, media.apron.chat"),
 and the trusted origins listed in that field (hosts or URLs, one per line, kept
 as `https:` origins). **Any site**
 loads it from anywhere; the trusted origins stay listed for when the default is
@@ -1796,8 +1898,8 @@ button (it opens the sign-in panel on Passkey); signed in to an account, or as
 a guest on a server whose `auth` offers only `guest` (nothing would lift it,
 as on `/archive`), the bar only says so. Replying, reacting, editing, moving and deleting messages,
 starting threads, editing rooms and threads, adding or removing members, and
-Join and Leave are hidden; a room picked under Other Rooms (which says no
-Join) opens to read through its history without joining it, and Other Threads
+Join and Leave are hidden; a room picked under Other Rooms opens to read
+through its history without joining it, as it does for anyone, and Other Threads
 offers no Join, since picking one already reads it. Other
 servers' denials show as errors as usual.
 

@@ -59,7 +59,8 @@
 	const toolbar = $derived(engaged && !view.editing && !view.selecting && actionable);
 
 	/**
-	 * The toolbar's actions, in order; the rarer ones wait behind ⋯. Touch's menu (`held`) keeps only Reply and React
+	 * The toolbar's actions, in order; the rarer ones wait behind ⋯. Reply's and Edit's labels name them in apron.css too,
+	 * which boxes the first letter of each (`r`, `e`) for the keyboard: change one, change both. Touch's menu (`held`) keeps only Reply and React
 	 * up front, with everything else behind ⋯, and offers Copy text, since its rows take no text selection.
 	 */
 	function actions(): { items: MessageAction[]; more?: MessageAction[] } {
@@ -138,18 +139,38 @@
 		});
 	}
 
-	/** Keyboard: `x` on a focused message picks it, the same as a shift-click; Escape puts touch's menu away. */
+	/**
+	 * Keyboard, on a focused message: `x` picks it, the same as a shift-click; `r` replies to it and `e` edits it, as
+	 * their buttons do, outside select mode; Escape puts touch's menu away, or leaves its toolbar for the row. Moving
+	 * between messages is the timeline's (the page's `timelineKey`).
+	 */
 	function keydown(event: KeyboardEvent): void {
 		if (event.key === 'Escape' && held) {
 			event.preventDefault();
 			release(event.currentTarget as HTMLElement);
 			return;
 		}
-		if (event.key !== 'x' || event.metaKey || event.ctrlKey || event.altKey || !view.caps?.select) return;
+		// Escape in its toolbar (gone into with Enter) gives the keyboard back to the row; an open menu's own Escape comes first.
+		if (event.key === 'Escape' && !event.defaultPrevented && event.target !== event.currentTarget && (event.target as HTMLElement | null)?.closest?.('.ap-msg-actions')) {
+			event.preventDefault();
+			(event.currentTarget as HTMLElement).focus();
+			return;
+		}
+		const key = event.key;
+		if (event.metaKey || event.ctrlKey || event.altKey || (key !== 'x' && key !== 'r' && key !== 'e')) return;
 		if ((event.target as HTMLElement | null)?.closest?.(FIELD)) return;
+		if (key === 'x') {
+			if (!view.caps?.select) return;
+			event.preventDefault();
+			if (view.selecting) on.select?.(view, false);
+			else on.beginSelect?.(view);
+			return;
+		}
+		if (view.selecting || view.editing) return;
+		const action = key === 'r' ? (view.caps?.reply ? on.reply : undefined) : view.caps?.edit ? on.edit : undefined;
+		if (!action) return;
 		event.preventDefault();
-		if (view.selecting) on.select?.(view, false);
-		else on.beginSelect?.(view);
+		action(view);
 	}
 
 	function checkKey(event: KeyboardEvent): void {

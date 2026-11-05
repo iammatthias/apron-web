@@ -9,6 +9,7 @@ export { default as NewThreadDialog } from './NewThreadDialog.svelte';
 export { default as PreferencesDialog } from './PreferencesDialog.svelte';
 export { default as RoomEditor } from './RoomEditor.svelte';
 export { default as SearchDialog } from './SearchDialog.svelte';
+export { default as ShortcutsDialog } from './ShortcutsDialog.svelte';
 export { default as SignInLinkDialog } from './SignInLinkDialog.svelte';
 export { default as SignInQrDialog } from './SignInQrDialog.svelte';
 // Hosts that draw nothing until their state (eager) asks, rendered from then on (`Lazy.once`): the page's popovers.
