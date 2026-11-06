@@ -17,7 +17,7 @@ only. Every link in chat, from
 message text, link cards, uploads and HTML embeds, opens in a new tab.
 
 `/__preview` (in development builds only: `vite dev`, or `APRON_PREVIEW=1 vite build`, which the QA tools and
-`npm run e2e` use; production builds leave it out) mounts this same app against a page-local in-memory WebSocket
+`npm run e2e` use; production builds leave out its page and its server, keeping only a route that answers 404) mounts this same app against a page-local in-memory WebSocket
 server, not the saved, configured, or same-origin backend. It seeds a guest,
 rooms, a thread, people, CommonMark examples, and a message moved into the thread,
 and implements the app's protocol
@@ -77,8 +77,10 @@ seconds); after such a `denied` error the client stops reconnecting, shows
 **Signed out** with the server's message, and waits for **Sign in**.
 When a newer version of the client is deployed (SvelteKit's version poll every
 5 minutes, at once on coming back after 5 minutes or more away, or a lazily
-loaded file the deploy removed), a notice at the top offers **Reload**
-or **Later**; it never reloads by itself. Drafts live only in memory, so while
+loaded file that failed to load, when the check then finds a newer deploy), a
+notice at the top offers **Reload** or **Later**; it never reloads by itself.
+A file that failed to load for a dropped connection instead shows a toast
+saying so, and the next click on what needed it tries again. Drafts live only in memory, so while
 any room or thread has unsent text or files it adds that reloading clears your
 unsent message.
 
@@ -94,7 +96,10 @@ under the New divider, and edits, deletions and reactions update in place. The k
 never sends a read cursor, notifies, or counts as unread, and the live session
 recovers every room as it would without it. It is kept per server in IndexedDB
 for the account signed in there, dropped after a week, removed on sign-out, and
-dropped as soon as the server signs in as anyone else. Without one (a first
+dropped as soon as the server signs in as anyone else. It is shown only to the
+account whose session is saved there, and it follows the history preferences:
+with Don't keep nothing is kept or shown, and clearing an account's history
+clears its view too. Without one (a first
 visit, or a guest), the page shows placeholder rooms, messages and members, with
 "Connecting…" and then "Loading messages…" at the foot of the timeline, instead of
 "Not signed in", "No rooms yet" or "No room open". While the open room or thread
@@ -114,7 +119,9 @@ back to it. Most reconnects are done by then, so they show nothing. A tab
 waiting while hidden shows nothing either, and the banner's "Still trying to
 reconnect…" also counts only from then, never the time the tab was away (hiding
 the tab mid-reconnect stops the count; a browser offline while the tab shows
-still counts). Its **Try Again** shows the new attempt at once.
+still counts). Its **Try Again** shows the new attempt at once. While the server
+has asked the client to wait (`retry_after`, or the connection status's
+`Retry-After`), the banner counts the wait down and Try Again waits with it.
 
 The pill is only for the open room or thread, whose newest messages may not be
 shown yet. Once it's current, other rooms still catching up (as after a reload
@@ -645,7 +652,8 @@ doesn't take focus from what you're typing; a screen reader reads it as it
 appears. While they're on, a notification replaces the chime (the chime
 still plays if one couldn't be shown), each room keeps one notification that
 the next message replaces (its newest mention, else its newest message), and
-clicking it opens that room or thread. Notifications show through the service
+clicking it opens that room or thread in the tab that showed it, which comes
+forward. Notifications show through the service
 worker, or from the page where there is none yet. Permission revoked in the
 browser's site settings reads as off.
 
@@ -663,7 +671,15 @@ while offline), and accounts on servers with the same key share it. When
 another server, with another key, holds it, the note names that server's host,
 and **Alert for this server instead** takes it over;
 tabs don't take it back on their own. Its `push_id`s are kept in IndexedDB for
-the service worker, which drops a push for any account push isn't on for.
+the service worker, which drops a push for any account push isn't on for. So
+are the titles of that account's rooms, up to 500 (joined ones first), while
+push is on for it: a push names its room only by `room_id` (§4.9.3), so a
+notification shown while Apron is closed names the room as the page would, and
+by its `room_id` for a room the page hadn't seen. When
+the browser replaces the subscription (one that expired, or that its push
+service renewed), the service worker subscribes again with the same key and
+tells any open tab, which registers the new one with the server; with no tab
+open, the next one to start does.
 Subscribing and unsubscribing run one at a time, across tabs too under the
 `apron-push` Web Lock where the browser has one, and a step that finishes
 after push was turned off, or after the tab moved to another server or
@@ -823,18 +839,23 @@ cutoff starts over from its newest page rather than paging through everything
 since (a quiet room saved recently counts as caught up then, however old its
 last message). It is kept only for a session saved here (an account, or a token the
 server resumes), never for a guest, and only in a browser that can list its
-databases (so signing out can find it to delete); signing out removes it, as does choosing
-not to keep any, in any tab: the others stop writing it back, and a retention
+databases (so signing out can find it to delete); signing out with Keep local history
+unticked removes it, as does choosing not to keep any, in any tab: the others stop
+writing it back, and a retention
 chosen in one tab holds in the others. Each account's history on each server
 is kept apart, in a database of its own: switching to another server, or
 connecting again from the sign-in screen, goes on from what was kept for that
-server in the same way, and leaves the others' as they are. One account's is
-kept per server, as one session is saved: signing in there as another deletes
-the one before. One tab
-writes at a time; another takes over when it closes. Preferences says how much Apron keeps on this device, and why it stopped
+server in the same way, and leaves the others' as they are. Accounts on the
+same server are kept apart too: signing in there as another leaves the one
+before as it is, and only the signed-in account's is restored, paged or
+searched. One tab
+writes at a time; another takes over when it closes. A write that fails for a
+moment is tried again a few times before keeping stops, and a tab left open
+removes what passed the retention every few hours, as a reload does.
+Preferences says how much Apron keeps on this device, and why it stopped
 keeping more if the device ran out of space.
 
-**Search local history** (first in the room header's ⋯ menu, or Ctrl+F, ⌘F on a Mac, in place of the browser's find while signed in and no other dialog is open, or its Messages switch in Go to a Room or Thread)
+**Search local history** (first in the room header's ⋯ menu, or Ctrl+F, ⌘F on a Mac, in place of the browser's find while signed in and no other dialog is open, or its Messages switch)
 starts narrowed to the open room or thread (`room:#general `, the caret after
 it; Backspace widens it to everywhere), and looks through this server's history kept on this device for the
 account signed in (none as a guest, or while keeping is off) and what the page has
@@ -864,32 +885,32 @@ yet loads its newest page), and searches again, now with them. Pressed again it
 goes a page further back. Once none has more, it says everything the server has
 there is loaded.
 
-**Go to a Room or Thread** (Ctrl+K, ⌘K on a Mac, as Search local history opens,
-or its Rooms and Threads switch; Ctrl/⌘F and Ctrl/⌘K switch between the two in
-it, keeping what's typed) finds rooms and threads by name among those the page
-knows of: the ones you've joined, which the server lists in full, threads
-included (§4.2.1), however long ago they were active and whether or not the rooms
-list shows them; those open without joining; those Other Rooms and each room's
-Other Threads last listed; and those whose records this device keeps (a private
-room you left isn't, since it can't be read). A name matches in any case and
-with or without accents: the whole title or `room_id` first, then the start of
-one, the start of a word in the title, anywhere in it, and then the
-description. The ones you've joined come first, under Joined, then those you
-haven't, under Not joined, each then by how well it matches and then by when it
-was last active; with nothing typed it lists them all that way, at most fifty.
-Each row has a # for a room or a hooked arrow for a thread, its title with what
-matched marked (a lock if private), a thread's room or else what the room is
-about, the day it was last active, and what's new in it as the rooms list counts
-it, or Not joined. `room:` (suggested as in Search local history) narrows it to
-the threads of that room, and → at the end of the field on a room does the
-same, putting in `room:#room_id `; Backspace there takes the filter away again.
-Enter or a click opens it: one you've joined, or open, as a mention of it does;
-any other read without joining, under its room if it's a thread, as a link to it
-does, with Join in its header. **Search the Server**, after the results, lists
-the rooms to join again, and the threads of the room `room:` names or else the
-open room's, fresh (`room_list`, two requests); a server lists only its most
-recently active rooms to join, so the note says those it didn't list aren't
-found. The protocol has no way to ask for older ones or to search by name.
+**Rooms and threads**, search's other mode (Ctrl+K, ⌘K on a Mac, as Search local
+history opens on it, or its Rooms and Threads switch; Ctrl/⌘F and Ctrl/⌘K switch
+between the two from anywhere in it, keeping what's typed, under the one title)
+finds rooms and threads by name among those the page knows of: the ones you've
+joined, which the server lists in full, threads included (§4.2.1), however long
+ago they were active and whether or not the rooms list shows them; those open
+without joining; those Other Rooms and each room's Other Threads last listed;
+and those whose records this device keeps (a private room you left isn't, since
+it can't be read). A name matches in any case and with or without accents: the
+whole title or `room_id` first, then the start of one, the start of a word in
+the title, anywhere in it, and then the description. The ones you've joined come
+first, under Joined, then those you haven't, under Not joined, each then by how
+well it matches and then by when it was last active; with nothing typed it lists
+them all that way, at most fifty. Each is drawn as the rooms list draws it (a
+private room with its faces, a lock, what's new in it, a bell-off when muted, a
+thread you haven't joined with when it was last active), what matched marked,
+and a thread with its room under its title. `room:` (suggested as in Search
+local history, rooms only) narrows it to the threads of that room, and → at the
+end of the field on a room does the same, putting in `room:#room_id `; Backspace
+there takes the filter away again. A room `room:` names has its threads you
+haven't joined listed from the server then (`room_list` with its
+`parent_room_id`, reusing a listing as recent as the rooms list's), and the line
+after the results says how many the server listed: only its most recently active
+ones, as the protocol lets a server list. Enter or a click opens one: one you've
+joined, or open, as a mention of it does; any other read without joining, under
+its room if it's a thread, as a link to it does, with Join in its header.
 
 **Export** saves what this page has loaded from the server as a `.jsonl` file
 (`apron-<host>-<day>.jsonl`, in the format [ARCHIVE.md](../ARCHIVE.md)
