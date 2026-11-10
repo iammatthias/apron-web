@@ -27,7 +27,7 @@
 		unjoined?: boolean;
 		/**
 		 * Muted (§4.5 `mute` with its `room_id`, or its parent's): a bell-off at the end of the row, before its count, and its news stays quiet: no
-		 * bold name, no tint for a mention, and a grey count, mentions too.
+		 * bold name and a grey count, but for a mention of you, which bolds and tints it and shows the orange @ count as in a thread that isn't muted.
 		 */
 		muted?: boolean;
 		/** Unread replies from others: a bold name and an ink count. */
@@ -60,37 +60,25 @@
 		title?: string;
 		/** Classes for the row's button, added to its own. */
 		class?: ClassValue;
-		/**
-		 * One of a listbox's options, such as a search's result, rather than a button (RoomRow): its `id`, whether the
-		 * keyboard is on it, and the pointer coming onto it. It isn't indented then, nor stepped back with nothing new.
-		 */
-		option?: { id: string; selected: boolean };
-		onhover?: () => void;
-		/** Its name in runs, what a search found marked. */
-		parts?: { text: string; match: boolean }[];
-		/** The room it's a thread of, on a line under its title ("in Engineering"), where it isn't listed under it. */
-		parent?: string;
 	}
 	let {
 		thread, name, private: isPrivate, active, unjoined = false, muted = false, unread, mentions, description, latest, ago, count, onselect, onleave, onjoin,
-		linesTestid, agoTestid, unreadTestid, title, option, onhover, parts, parent, class: className
+		linesTestid, agoTestid, unreadTestid, title, class: className
 	}: Props = $props();
 	const shown = $derived(roomName(name, thread, { thread: true }));
 	const tip = $derived(roomNameTip(name, thread, { thread: true }));
-	/** A joined thread: tinted with an unread mention, stepped back with nothing new. */
-	const mention = $derived(!active && !unjoined && !muted && Boolean(mentions));
-	const quiet = $derived(!option && !active && !unjoined && !unread && !mentions);
+	/** A joined thread: tinted with an unread mention (one gets through a mute), stepped back with nothing new. */
+	const mention = $derived(!active && !unjoined && Boolean(mentions));
+	const quiet = $derived(!active && !unjoined && !unread && !mentions);
 </script>
 
 {#snippet lines()}<ThreadLines {description} {latest} descriptionTestid={linesTestid && `${linesTestid}-description`} latestTestid={linesTestid && `${linesTestid}-latest`} />{/snippet}
-<!-- As a search's result: its room first, where it isn't listed under it. -->
-{#snippet found()}{#if parent}<span class="ap-room-topic">in {parent}</span>{/if}<ThreadLines {description} {latest} />{/snippet}
 
 <RoomRow
-	room={thread} noun="thread" label={shown} {tip} private={isPrivate} {muted} {active} nested={!option} framed={!option} listed={unjoined} {title} {onselect} {onleave} {onjoin} {option} {onhover} {parts} lines={option ? found : lines}
-	class={[(unread || mentions) && !muted && 'ap-room-unread', unjoined && 'ap-room-unjoined', mention && 'ap-room-mention', quiet && 'ap-room-quiet', className]}
+	room={thread} noun="thread" label={shown} {tip} private={isPrivate} {muted} {active} nested framed listed={unjoined} {title} {onselect} {onleave} {onjoin} {lines}
+	class={[(mentions || (unread && !muted)) && 'ap-room-unread', unjoined && 'ap-room-unjoined', mention && 'ap-room-mention', quiet && 'ap-room-quiet', className]}
 >
-	<UnreadCount unread={unread ?? 0} mentions={mentions ?? 0} quiet={muted} noun="reply" testid={unreadTestid} />
+	<UnreadCount unread={unread ?? 0} mentions={mentions ?? 0} noun="reply" testid={unreadTestid} />
 	{#if count !== undefined}<small class="ap-room-count" aria-label={`${count} ${count === 1 ? 'message' : 'messages'}`}>{count}</small>
 	{:else if ago?.text}<time class="ap-room-ago" data-testid={agoTestid} datetime={ago.datetime} title={ago.title}>{ago.text}</time>{/if}
 </RoomRow>

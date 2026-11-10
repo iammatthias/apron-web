@@ -23,6 +23,14 @@ export class UnreadTracker {
 	/** Unread arrivals per room (threads are rooms of their own). */
 	byRoom = $state<Record<string, number>>({});
 	total = $derived(Object.values(this.byRoom).reduce((sum, count) => sum + count, 0));
+	/**
+	 * The unread count outside the rooms you muted (§4.5), and threads of them: with the
+	 * mentions in those (`mutedMentions`), what the tab title and the app badge show. A
+	 * muted room keeps its own count in `byRoom`.
+	 */
+	alerting = $state(0);
+	/** The counts in `byRoom` of the rooms you muted, and threads of them. */
+	muted = $state<Record<string, number>>({});
 	private readonly shown = new Map<string, Set<string>>();
 	private readonly watermarks = new Map<string, string>();
 	private readonly arrivals = new Map<string, string[]>();
@@ -39,6 +47,8 @@ export class UnreadTracker {
 	 */
 	reset(): void {
 		this.byRoom = {};
+		this.alerting = 0;
+		this.muted = {};
 		this.shown.clear();
 		this.watermarks.clear();
 		this.arrivals.clear();
@@ -108,6 +118,9 @@ export class UnreadTracker {
 			if (count > 0) next[room.id] = count;
 		}
 		if (!sameCounts(this.byRoom, next)) this.byRoom = next;
+		const { alerting, muted } = splitMuted(next, rooms);
+		if (alerting !== this.alerting) this.alerting = alerting;
+		if (!sameCounts(this.muted, muted)) this.muted = muted;
 	}
 
 	/**
@@ -143,6 +156,30 @@ function joinOf(room: RoomSnapshot, userId: string): string | undefined {
 		if (entry) return entry.joined ? records[index].log_id : undefined;
 	}
 	return undefined;
+}
+
+/** A per-room count added up over every room but those you muted (§4.5), and threads of them, and those apart. */
+function splitMuted(byRoom: Record<string, number>, rooms: readonly RoomSnapshot[]): { alerting: number; muted: Record<string, number> } {
+	const mutedIds = new Set(rooms.filter((room) => room.mutedUntil !== undefined).map((room) => room.id));
+	let alerting = 0;
+	const muted: Record<string, number> = {};
+	for (const room of rooms) {
+		const count = byRoom[room.id];
+		if (count === undefined) continue;
+		if (mutedIds.has(room.id) || (room.parentRoomId !== undefined && mutedIds.has(room.parentRoomId))) muted[room.id] = count;
+		else alerting += count;
+	}
+	return { alerting, muted };
+}
+
+/**
+ * The unread mentions of you in the rooms you muted (`UnreadTracker.muted`), and threads of them: a mention
+ * gets through a mute, as in other chat apps, so these count in the tab title and the app badge too.
+ */
+export function mutedMentions(muted: Record<string, number>, mentions: Record<string, number>): number {
+	let total = 0;
+	for (const [room, count] of Object.entries(muted)) total += Math.min(count, mentions[room] ?? 0);
+	return total;
 }
 
 /** A per-room count added up over every room but `pane`, the one being read. */

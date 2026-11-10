@@ -1,3 +1,4 @@
+import type { Locator } from '@playwright/test';
 import { DEVICES, expect, test, type Preview } from './fixtures';
 
 /**
@@ -37,6 +38,38 @@ test.describe('a message row', () => {
 			await expect(page.getByTestId('reactors')).toHaveCount(0);
 		});
 
+		await test.step('the add button after the chips opens the same picker beside it, and a pick adds to them', async () => {
+			const row = preview.message('Open a thread, react to a message');
+			await row.hover();
+			const add = row.getByRole('button', { name: 'Add a reaction', exact: true });
+			await add.click();
+			await expect(add).toHaveAttribute('aria-expanded', 'true');
+			const picker = page.getByRole('dialog', { name: 'Emoji picker', exact: true });
+			await expect(picker).toHaveAttribute('data-state', 'ready');
+			await picker.locator('em-emoji-picker input[type="search"]').fill('fire');
+			await picker.getByRole('button', { name: '🔥', exact: true }).first().click();
+			await preview.waitForSent('reactions', (params) => params.message_id === '1710000000004' && params.emojis?.includes('🔥'));
+			await expect(row.getByTestId('reaction-chip')).toHaveCount(2);
+			await row.hover();
+			await expect(add).toHaveAttribute('aria-expanded', 'false');
+		});
+
+		await test.step('the toolbar offers the emoji you reacted with last, latest first, and one press reacts with one', async () => {
+			const row = preview.message('Try markdown');
+			await row.hover();
+			const quick = row.getByRole('group', { name: 'Quick reactions' }).getByRole('button');
+			await expect(quick).toHaveText(['🔥', '🎉', '👍']);
+			await quick.filter({ hasText: '👍' }).click();
+			await preview.waitForSent('reactions', (params) => params.message_id !== '1710000000004' && params.emojis?.includes('👍'));
+			await expect(row.getByTestId('reaction-chip')).toHaveCount(1);
+			// It keeps its place while the pointer stays, and comes first the next time.
+			await expect(quick).toHaveText(['🔥', '🎉', '👍']);
+			await page.mouse.move(0, 0);
+			await row.hover();
+			await expect(quick).toHaveText(['👍', '🔥', '🎉']);
+			await expect(quick.filter({ hasText: '👍' })).toHaveAttribute('aria-pressed', 'true');
+		});
+
 		await test.step('an image embed opens full screen', async () => {
 			await preview.message('Two from the ridge').getByRole('img', { name: /Layered purple hills/ }).click();
 			await expect(page.getByRole('dialog').getByRole('button', { name: 'Next image' })).toBeVisible();
@@ -57,6 +90,156 @@ test.describe('a message row', () => {
 			await preview.message('third of mine').locator('.ap-msg-text').click({ modifiers: ['Shift'] });
 			await expect(page.getByTestId('selection-bar')).toContainText('3 messages selected');
 		});
+	});
+});
+
+/** Whether the toolbar of the message hovered shows Reply's words beside its icon. */
+async function replyWords(preview: Preview, text: string): Promise<boolean> {
+	const row = preview.message(text);
+	await row.hover();
+	const reply = row.getByRole('button', { name: 'Reply to message', exact: true });
+	await expect(reply).toBeVisible();
+	return reply.evaluate((element) => getComputedStyle(element.querySelector('.ap-actions-label')!).display !== 'none');
+}
+
+for (const [device, wide] of [['desktop', true], ['tablet', false]] as const) {
+	test.describe(`the message toolbar, ${device}`, () => {
+		test.use(DEVICES[device]);
+
+		test(wide ? 'shows each icon’s words beside it in a wide pane, and ⋯ opens a menu of them' : 'shows icons alone where the pane is narrow, and ⋯ opens a menu of their words', async ({ preview, page }) => {
+			await preview.open();
+			expect(await replyWords(preview, 'Try markdown')).toBe(wide);
+			const toolbar = preview.message('Try markdown').getByRole('toolbar', { name: 'Message actions' });
+			await toolbar.getByRole('button', { name: 'More actions', exact: true }).click();
+			await expect(toolbar).toHaveAttribute('aria-orientation', 'vertical');
+			await expect(toolbar.getByRole('button', { name: 'Copy link to message', exact: true })).toHaveText('Copy link');
+			// It stays while open, the pointer over another message; once Escape shuts it, that message gets the toolbar.
+			const other = preview.message('Open a thread');
+			await other.hover({ position: { x: 24, y: 12 } });
+			await expect(toolbar).toHaveAttribute('aria-orientation', 'vertical');
+			await expect(other.getByRole('toolbar', { name: 'Message actions' })).toHaveCount(0);
+			await page.keyboard.press('Escape');
+			await other.hover({ position: { x: 32, y: 14 } });
+			await expect(other.getByRole('toolbar', { name: 'Message actions' })).toBeVisible();
+			await expect(other.getByRole('toolbar', { name: 'Message actions' })).not.toHaveAttribute('aria-orientation', 'vertical');
+		});
+	});
+}
+
+test.describe('a task list', () => {
+	test.use(DEVICES.desktop);
+
+	test('checking a box in your message saves the edit; one in someone else\'s is not yours to tick, mentioned or not', async ({ preview }) => {
+		await preview.open();
+		await preview.post('general', 'preview_guest', 'Ship it:\n\n- [ ] Foo\n- [x] Bar');
+		await preview.post('general', 'ada', 'Mine:\n\n- [ ] Theirs');
+		// Without ext:editors only its sender may edit a message, whoever it mentions.
+		await preview.post('general', 'ada', { text: 'For @preview_guest:\n\n- [ ] Yours', format: 'markdown', mentions: ['preview_guest'] }, { ext: { editors: { 'body.text': 'mentioned' } } });
+		await expect(preview.message('For ').getByRole('checkbox')).toBeDisabled();
+		const mine = preview.message('Ship it:').getByRole('checkbox');
+		await expect(mine).toHaveCount(2);
+		await expect(mine.nth(0)).not.toBeChecked();
+		await expect(mine.nth(1)).toBeChecked();
+		await expect(preview.message('Mine:').getByRole('checkbox')).toBeDisabled();
+
+		await mine.nth(0).check();
+		const edit = await preview.waitForSent('message', (params) => params.message_id !== undefined);
+		expect(edit.body).toMatchObject({ text: 'Ship it:\n\n- [x] Foo\n- [x] Bar', format: 'markdown' });
+		await expect(mine.nth(0)).toBeChecked();
+		await expect(mine.nth(0)).toBeEnabled();
+	});
+
+	test('keeps each check on its first word\'s line, centred as the line\'s chips are, in a message and in the composer', async ({ preview, page }) => {
+		// A first word with nowhere to break, wider than any line: a line may break after an inline box, which would
+		// leave the check alone above it.
+		const long = `Long${'o'.repeat(160)}`;
+		/** The vertical centre of a box. */
+		const centre = (box: { y: number; height: number } | null) => box!.y + box!.height / 2;
+		/**
+		 * How far the check's centre sits below that of the first letter of `long` (the box a chip or any other inline
+		 * box on the line centres on), in px: about a line's height if it went to a line of its own.
+		 */
+		const offset = (check: Locator) =>
+			check.evaluate((box) => {
+				const item = box.closest('.ap-task-item, .ap-composer-editable')!;
+				const walker = document.createTreeWalker(item, NodeFilter.SHOW_TEXT, (node) => (node.textContent!.includes('Long') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP));
+				const text = walker.nextNode()!;
+				const range = document.createRange();
+				const at = text.textContent!.indexOf('Long');
+				range.setStart(text, at);
+				range.setEnd(text, at + 1);
+				const middle = (rect: DOMRect) => (rect.top + rect.bottom) / 2;
+				return middle(box.getBoundingClientRect()) - middle(range.getBoundingClientRect());
+			});
+
+		await preview.open();
+		await preview.post('general', 'preview_guest', `Odd one:\n\n- [ ] ${long}\n- [ ] @ada\n- [ ] مرحبا بالعالم`);
+		const checks = preview.message('Odd one:').getByRole('checkbox');
+		await expect(checks).toHaveCount(3);
+		expect(Math.abs(await offset(checks.first()))).toBeLessThan(1);
+		// An item that is only a mention: the check level with its chip.
+		const chipItem = preview.message('Odd one:').locator('li').nth(1);
+		const [check, mention] = await Promise.all([chipItem.getByRole('checkbox').boundingBox(), chipItem.locator('.ap-mention').boundingBox()]);
+		expect(Math.abs(centre(check) - centre(mention))).toBeLessThan(0.5);
+		// An item whose text runs the other way from the page's (each item takes its own direction): its check stays in
+		// the gutter, clear of the text.
+		const overlap = await checks.nth(2).evaluate((box) => {
+			const range = document.createRange();
+			range.selectNodeContents(box.closest('li')!);
+			range.setStartAfter(box);
+			const ring = box.getBoundingClientRect();
+			return [...range.getClientRects()].some((rect) => rect.width > 0 && rect.left < ring.right && rect.right > ring.left);
+		});
+		expect(overlap).toBe(false);
+
+		await preview.composer().click();
+		await page.keyboard.type(`- [ ] ${long}`);
+		const chip = preview.composer().locator('.ap-task-chip');
+		await expect(chip).toHaveCount(1);
+		expect(Math.abs(await offset(chip))).toBeLessThan(1);
+		// A click in the space after it puts the caret there, and doesn't tick it.
+		const ring = (await chip.boundingBox())!;
+		await page.mouse.click(ring.x + ring.width + 3, ring.y + ring.height / 2);
+		await expect(chip).not.toHaveClass(/ap-task-chip-done/);
+	});
+});
+
+test.describe('a message shared with those it mentions (ext:editors)', () => {
+	test.use({ ...DEVICES.desktop, knobs: { capabilities: ['ext:editors'] } });
+
+	test('is yours to tick and edit where it mentions you, and says you edited it', async ({ preview, page }) => {
+		await preview.open();
+		await preview.post('general', 'ada', { text: 'Lunch, @preview_guest:\n\n- [ ] Soup', format: 'markdown', mentions: ['preview_guest'] }, { ext: { editors: { 'body.text': 'mentioned' } } });
+		await preview.post('general', 'ada', { text: 'Not shared, @preview_guest:\n\n- [ ] Salad', format: 'markdown', mentions: ['preview_guest'] });
+		await expect(preview.message('Not shared').getByRole('checkbox')).toBeDisabled();
+		const box = preview.message('Lunch, ').getByRole('checkbox');
+		await expect(box).toBeEnabled();
+		await box.check();
+		const edit = await preview.waitForSent('message', (params) => params.message_id !== undefined);
+		expect(edit.body).toMatchObject({ text: 'Lunch, @preview_guest:\n\n- [x] Soup' });
+		await expect(preview.message('Lunch, ').getByTestId('message-edited-by')).toHaveText(/edited by/);
+		// Its text is yours to edit too, but not to delete.
+		await preview.message('Lunch, ').hover();
+		await expect(preview.message('Lunch, ').getByRole('button', { name: 'Edit message' })).toBeVisible();
+		await preview.message('Lunch, ').getByRole('button', { name: 'More actions' }).click();
+		await expect(page.getByRole('menuitem', { name: 'Delete message' })).toHaveCount(0);
+	});
+
+	test('Send asks whether those a checklist mentions may edit it', async ({ preview, page }) => {
+		await preview.open();
+		await preview.composer().click();
+		await page.keyboard.type('@ada lunch?');
+		await page.keyboard.press('Shift+Enter');
+		await page.keyboard.press('Shift+Enter');
+		await page.keyboard.type('- [ ] soup');
+		await page.keyboard.press('Enter');
+		const prompt = page.getByTestId('editors-prompt');
+		await expect(prompt).toContainText('Let Ada Lovelace edit this message?');
+		await prompt.getByRole('button', { name: 'Let them edit' }).click();
+		const sent = await preview.waitForSent('message', (params) => params.message_id === undefined && String(params.body?.text).includes('soup'));
+		expect(sent.ext).toEqual({ editors: { 'body.text': 'mentioned' } });
+		expect(sent.body?.mentions).toEqual(['ada']);
+		await expect(prompt).toHaveCount(0);
 	});
 });
 

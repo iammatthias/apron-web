@@ -136,9 +136,10 @@ import {
 	type TypingState,
 	type ValidHistoryResponse
 } from './client-internals';
-import { capabilitiesOf, peopleTitle, PRIVATE_ROOM, sameRoomSnapshot, serverAddress, serverSettings, yourPermissions } from './client-views';
+import { capabilitiesOf, parseServerParams, peopleTitle, PRIVATE_ROOM, sameRoomSnapshot, serverAddress, serverSettings, yourPermissions } from './client-views';
 import { reactionKey } from './custom-emoji';
 import { HistoryQueue } from './history-queue';
+import { toggleTask } from './task-list';
 import { Transport } from './transport';
 
 export * from './client-types';
@@ -1139,6 +1140,41 @@ export class ChatClient {
 		return proposed;
 	}
 
+	/**
+	 * Reads the `server` frame of the server at `url` (§3.1) before signing in
+	 * there, so the connect screen can offer what that server offers. It
+	 * goes on a connection of its own that sends nothing (pings aside) and
+	 * closes once greeted, as Continue's tap asks: this client, its
+	 * connection and its session are left as they are. Rejects with what to
+	 * tell the viewer: the address can't be reached, didn't answer, or
+	 * answered but not as an Apron server; or `Cancelled` once `signal` aborts.
+	 */
+	async greet(url: string, signal?: AbortSignal): Promise<ServerParams> {
+		signal?.throwIfAborted();
+		let connection: SignInConnection;
+		try {
+			connection = this.openSignInConnection(url);
+		} catch {
+			throw new Error(CANT_REACH);
+		}
+		const abort = () => connection.close(new Error('Cancelled'));
+		signal?.addEventListener('abort', abort, { once: true });
+		try {
+			await connection.ready;
+			const server = parseServerParams(connection.server);
+			if (!server) throw new Error(NOT_APRON);
+			return server;
+		} catch (cause) {
+			if (signal?.aborted) throw cause;
+			if (connection.heard) throw new Error(NOT_APRON);
+			// Opened and silent until the timeout, or never opened (an error, or closed before greeting).
+			throw new Error(cause instanceof Error && cause.message.includes('didn’t answer') ? NO_ANSWER : CANT_REACH);
+		} finally {
+			signal?.removeEventListener('abort', abort);
+			connection.close();
+		}
+	}
+
 	/** A connection of its own for an email or external sign-in, closed on `stop()` if still open. */
 	private openSignInConnection(url: string): SignInConnection {
 		const connection = SignInConnection.open(this.webSocketFactory, url);
@@ -1640,7 +1676,7 @@ export class ChatClient {
 			...(room !== DEFAULT_ROOM_ID ? { room_id: room } : {}),
 			body,
 			...(options.replyTo !== undefined ? { reply_to: { message_id: options.replyTo } } : {}),
-			...(options.ext !== undefined && this.hasCap('ext') ? { ext: options.ext } : {})
+			...(options.ext !== undefined && this.mayWriteExt(options.ext) ? { ext: options.ext } : {})
 		};
 	}
 
@@ -1772,6 +1808,18 @@ export class ChatClient {
 			return [title === undefined ? entry : renamedEmbed(entry, title)];
 		});
 		return this.saveMessage(messageId, { body: kept.length ? { ...rest, embeds: kept } : rest });
+	}
+
+	/**
+	 * Checks or unchecks the task list item on `line` of a Markdown body (a checkbox's `data-task-line`), on top of
+	 * any edit still unconfirmed, as an edit of the text. Undefined, saving nothing, when that line holds no task or
+	 * it is already as asked.
+	 */
+	toggleTask(messageId: string, line: number, checked: boolean): OperationHandle<MessageResult> | undefined {
+		const body = this.messageBase(messageId)?.body;
+		if (!isJsonObject(body) || body.format !== 'markdown' || typeof body.text !== 'string') return undefined;
+		const text = toggleTask(body.text, line, checked);
+		return text === undefined ? undefined : this.editMessage(messageId, text);
 	}
 
 	/**
@@ -3041,27 +3089,12 @@ export class ChatClient {
 	}
 
 	private handleServer(params: JsonObject | undefined): void {
-		if (!params || typeof params.apron !== 'number' || !Array.isArray(params.auth)) return;
-		const auth = params.auth.filter(isString);
-		if (!auth.length) return;
+		const server = parseServerParams(params);
+		if (!server) return;
+		const auth = server.auth;
 		const previousPing = this.server?.ping;
 		const previousCapabilities = this.server?.capabilities ?? [];
-		this.server = {
-			apron: params.apron,
-			...(typeof params.agent === 'string' ? { agent: params.agent } : {}),
-			capabilities: Array.isArray(params.capabilities) ? params.capabilities.filter(isString) : [],
-			auth,
-			...(Array.isArray(params.signup) ? { signup: params.signup.filter(isString) } : {}),
-			...(typeof params.welcome === 'string' && params.welcome.trim() ? { welcome: params.welcome } : {}),
-			// How it shows itself (§3.1): never what it is known by, its address (§1).
-			...(typeof params.title === 'string' ? { title: params.title } : {}),
-			...(typeof params.description === 'string' ? { description: params.description } : {}),
-			...(typeof params.avatar === 'string' ? { avatar: params.avatar } : {}),
-			...(isJsonObject(params.ext) ? { ext: params.ext } : {}),
-			...(isJsonObject(params.push) ? { push: params.push } : {}),
-			...(Array.isArray(params.status) ? { status: params.status.filter(isString) } : {}),
-			...(typeof params.ping === 'number' && Number.isFinite(params.ping) && params.ping > 0 ? { ping: params.ping } : {})
-		};
+		this.server = server;
 		// Greeted: the socket is open and the server on it. From here pings (§1) and request timeouts watch it.
 		this.transport.greeted(previousPing !== this.server.ping);
 		// Each frame fully replaces the last (§3.1): features are worth trying again.
@@ -3824,6 +3857,12 @@ export class ChatClient {
 
 	private hasCap(cap: Capability): boolean {
 		return this.server?.capabilities?.includes(cap) === true;
+	}
+
+	/** Whether the server keeps this `ext`: with capability `ext`, or each key's own extension, such as `ext:editors` (§4.12). */
+	private mayWriteExt(ext: JsonObject): boolean {
+		const keys = Object.keys(ext);
+		return this.hasCap('ext') || (keys.length > 0 && keys.every((key) => this.server?.capabilities?.includes(`ext:${key}`) === true));
 	}
 
 	private isThread(roomId: string): boolean {
@@ -5121,6 +5160,11 @@ const PROPOSAL_SCHEMES: ProposalScheme[] = ['email', 'external'];
 function linkMethod(offered: readonly ProposalScheme[]): ProposalScheme | 'link' {
 	return offered.length === 1 ? offered[0] : 'link';
 }
+
+/** Why a greeting couldn't be read (`greet`), as the connect screen says it. */
+const CANT_REACH = 'Can’t reach the server. Check the address and try again.';
+const NO_ANSWER = 'The server didn’t answer. Check the address and try again.';
+const NOT_APRON = 'This address answered, but not as an Apron server. Check the whole address, including its path.';
 
 /** The error for a proposal to a server that doesn’t offer its scheme. */
 const NOT_OFFERED: Record<ProposalScheme, string> = {

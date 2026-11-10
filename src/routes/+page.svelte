@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { installNudge, messageEditor, newPrivateDialog, newThreadDialog, profileCardHost, reactorsPopover, roomEditor, searchDialog, selectionBar, serverPaneHost, shortcutsDialog, signInLinkDialog } from '$lib/components/lazy';
+	import { editorsNudge, installNudge, mentionAddNudge, messageEditor, newPrivateDialog, newThreadDialog, profileCardHost, reactorsPopover, roomEditor, searchDialog, selectionBar, serverPaneHost, shortcutsDialog, signInLinkDialog } from '$lib/components/lazy';
 	import { onMount, tick, untrack } from 'svelte';
 	import { fromAction } from 'svelte/attachments';
 	import { pushState, replaceState } from '$app/navigation';
@@ -9,20 +9,22 @@
 	import { embedsLabel, serverOrigin } from '$lib/protocol/embeds';
 	import { withoutBidiOverrides } from '$lib/protocol/plain-text';
 	import { compareLogIds } from '$lib/protocol/reducer';
-	import { destinationUrl, readDestination, type Destination } from '$lib/ui/address';
+	import { destinationUrl, elsewhereUrl, readDestination, type Destination } from '$lib/ui/address';
 	import { readApronLink, writeApronLink, type ApronLink } from '$lib/ui/apron-link';
 	import type { Embed, MessageRecord } from '$lib/protocol/types';
-	import { isJsonObject } from '$lib/protocol/types';
+	import { isJsonObject, isSystemId } from '$lib/protocol/types';
+	import { hasTaskItems, markdownRoles } from '$lib/protocol/markdown';
 	import Composer from '$lib/components/Composer.svelte';
 	import ReadOnlyBar from '$lib/components/ReadOnlyBar.svelte';
 	import ConnectScreen from '$lib/components/ConnectScreen.svelte';
 	import { SettleFlag } from '$lib/ui/settle-flag';
-	import type { Scheme } from '$lib/ui/sign-in';
+	import { onMac } from '$lib/ui/handheld';
+	import { signedInScheme, type Scheme } from '$lib/ui/sign-in';
 	import JumpBar from '$lib/components/JumpBar.svelte';
 	import TimelineMessage from '$lib/components/TimelineMessage.svelte';
 	import EmbedItem from '$lib/components/embeds/Embed.svelte';
 	import type { Face, MessageEmbed, MessageHandlers, MessageTestids } from '$lib/design/components/types';
-	import { linkedRoomIn, messageView, sourceEmbed, type LinkedRoom, type MessageCaps, type MessageContext, type MessageView } from '$lib/ui/message-view';
+	import { linkedRoomIn, messageView, sourceEmbed, type LinkedRoom, type MessageCaps, type MessageContext, type MessageRow, type MessageView } from '$lib/ui/message-view';
 	import { decorateCode } from '$lib/ui/copy-code';
 	import { emojiAnchor, emojiPicker, type EmojiPickerRequest } from '$lib/ui/emoji-picker.svelte';
 	import { openProfileFrom, profileCard } from '$lib/ui/profile-card.svelte';
@@ -48,29 +50,30 @@
 	import PrivateIntro from '$lib/design/components/PrivateIntro.svelte';
 	import AddedBanner from '$lib/design/components/AddedBanner.svelte';
 	import { ArrivalWatch, addRoomMembers, othersIn, reachesStart } from '$lib/ui/private-rooms';
-	import { couldNotAdd } from '$lib/ui/members';
+	import { absentMentions, addMembers, couldNotAdd, isGuest, unheldRoleHolders } from '$lib/ui/members';
 	import { faceOf, roomFaces } from '$lib/ui/faces';
 	import { receiptsByMessage, steadyReceipts } from '$lib/ui/receipts';
 	import { attachmentLimits, composerAction } from '$lib/ui/commands';
-	import { backendHost, statusLabel } from '$lib/ui/connection';
+	import { serverLabel, statusLabel } from '$lib/ui/connection';
 	import { directory } from '$lib/ui/directory.svelte';
 	import { FeedbackState, type Feedback } from '$lib/ui/feedback.svelte';
 	import type { LiveComposer } from '$lib/ui/live-composer.svelte';
 	import { prepareUpload } from '$lib/ui/images';
 	import { MentionTracker } from '$lib/ui/mentions.svelte';
 	import { IncomingMessageTracker } from '$lib/ui/incoming-messages';
-	import { UnreadTracker, countElsewhere } from '$lib/ui/unread.svelte';
+	import { UnreadTracker, countElsewhere, mutedMentions } from '$lib/ui/unread.svelte';
 	import { ReadPositions } from '$lib/ui/read-positions';
 	import { RoomOrder } from '$lib/ui/room-order.svelte';
+	import { mayEditText, SHARED_TEXT } from '$lib/protocol/editors';
 	import { embedsOf, isOwn, mayMove, mentionsMe, peopleIn, messageSnippet, plainTextOf, senderName, textOf } from '$lib/ui/messages';
 	import { removeEmbedQuestion } from '$lib/ui/attachments';
 	import { messageLog, messageLogHtml } from '$lib/ui/message-log';
-	import { reactionChips, type ReactionChip } from '$lib/ui/reactions';
+	import { quickReactions, reactedWith, reactionChips, rememberReaction, type ReactionChip } from '$lib/ui/reactions';
 	import { MessageSelection, type MoveAuthors } from '$lib/ui/selection.svelte';
 	import { SessionView } from '$lib/ui/session.svelte';
 	import { MEMBER_LIST_WIDTHS, ROOMS_LIST_WIDTHS, SidebarLayout } from '$lib/ui/sidebar.svelte';
 	import { NARROW_MAX, WIDE_MIN } from '$lib/ui/breakpoints';
-	import { loadDisplayName, loadMemberListPrefs, loadNotificationsEnabled, notificationsChosen, installOfferAnswered, answerInstallOffer, loadRecentServers, loadServerUrl, loadSidebarPrefs, refreshRecentServer, rememberServer, saveDisplayName, saveMemberListPrefs, saveServerUrl, saveNotificationsEnabled, saveSidebarPrefs, loadNotifyScopes, saveNotifyScopes, NOTIFY_SCOPES_KEY, HIDDEN_DESCRIPTIONS_KEY, INSTALL_OFFER_KEY, loadAddedRooms, saveAddedRooms, loadHiddenDescriptions, hideDescription, showDescription, descriptionHidden, type RecentServer } from '$lib/ui/storage';
+	import { loadDisplayName, loadMemberListPrefs, loadNotificationsEnabled, notificationsChosen, installOfferAnswered, answerInstallOffer, loadRecentReactions, saveRecentReactions, loadRecentServers, loadServerUrl, loadSidebarPrefs, refreshRecentServer, rememberServer, saveDisplayName, saveLastSignIn, saveMemberListPrefs, saveServerUrl, saveNotificationsEnabled, saveSidebarPrefs, loadNotifyScopes, saveNotifyScopes, NOTIFY_SCOPES_KEY, HIDDEN_DESCRIPTIONS_KEY, INSTALL_OFFER_KEY, loadAddedRooms, saveAddedRooms, loadHiddenDescriptions, hideDescription, showDescription, descriptionHidden, type RecentServer } from '$lib/ui/storage';
 	import TimelineLoading from '$lib/design/components/TimelineLoading.svelte';
 	import RateLimitNotice from '$lib/design/components/RateLimitNotice.svelte';
 	import SystemLine from '$lib/design/components/SystemLine.svelte';
@@ -146,7 +149,7 @@
 	/** The connection error closed from its toast; one that clears and comes back shows again. */
 	let dismissedError = $state<string | undefined>();
 	const mentions = new MentionTracker();
-	/** How many mentions of you have arrived outside the rooms you muted: each new one can alert the tab. */
+	/** How many mentions of you have arrived, muted rooms included: each new one can alert the tab. */
 	let audibleMentions = $state(0);
 	const incomingMessages = new IncomingMessageTracker();
 	const unread = new UnreadTracker();
@@ -230,7 +233,7 @@
 	 */
 	let webPushHeldBy = $derived.by(() => {
 		const server = webPushActive ? pushSettings.heldBy(pushAccount, webPushServerKey) : undefined;
-		return server === undefined ? undefined : backendHost(server) || 'another server';
+		return server === undefined ? undefined : serverLabel(server) || 'another server';
 	});
 	/** Bumped when a choice of what to notify about is saved, here or in another tab, so it is read again. */
 	let notifyScopesSaved = $state(0);
@@ -308,11 +311,25 @@
 	let displayName = $state('');
 	/** The `user_id`s the composer's chips mention (§3.5), sent as `body.mentions`. */
 	let composerMentions = $state<string[]>([]);
+	/**
+	 * A message held back at Send because it mentions people who aren't in the room or thread it goes to: the ask to
+	 * add them first (MentionAddPrompt), until it's answered, put away, the draft changes, or the pane does. `text` and
+	 * `files` (the staged files' ids): the draft it asked about, which Add and send sends only if it is still that draft.
+	 */
+	let mentionAsk = $state<{ roomId: string; userIds: string[]; busy: boolean; text: string; files: string } | undefined>();
+	/**
+	 * A message held back at Send because it mentions people and holds a checklist: the ask whether they may edit its
+	 * text (`ext:editors`, EditorsPrompt), until it's answered, put away, the draft changes, or the pane does. `added`:
+	 * whom the ask to add who it mentions added, which it goes on to mention; `text` and `files` as `mentionAsk`'s.
+	 */
+	let editorsAsk = $state<{ roomId: string; userIds: string[]; added: string[]; text: string; files: string } | undefined>();
 	let connectOpen = $state(false);
 	/** Disconnected from the server pane: the connect screen can't be cancelled back to it. */
 	let disconnected = $state(false);
 	/** The sign-in scheme the connect screen opens with, when something asked for one. */
 	let connectScheme = $state<Scheme | undefined>();
+	/** The connect screen opens at choosing a server (a new one, or a link's), rather than at signing in to the one in it. */
+	let connectChoosing = $state(false);
 	let recentServers = $state<RecentServer[]>([]);
 	let passkeyUnavailable = $state<string | undefined>();
 	let highlightedId = $state<string | undefined>();
@@ -346,6 +363,7 @@
 			// The connect screen can start again, on the link's server, which is not remembered unless that works.
 			serverInput = server;
 			connectScheme = scheme;
+			connectChoosing = false;
 			connectOpen = true;
 		}
 	});
@@ -506,6 +524,8 @@
 	let olderSource = $derived(activeThread ? threadRoom : session.activeRoomHeld ? undefined : session.room(session.activeRoomId));
 	/** What's new in the rooms and threads other than the one being read, as the rooms list counts it: the phone header's back button shows it. */
 	let unreadElsewhere = $derived(countElsewhere(unread.byRoom, paneRoom?.id));
+	/** What the tab title and the app badge count: unread messages outside muted rooms, and mentions of you in them. */
+	let unreadAlerting = $derived(unread.alerting + mutedMentions(unread.muted, mentions.byRoom));
 	let mentionsElsewhere = $derived(countElsewhere(mentions.byRoom, paneRoom?.id));
 	/** The waits the server asked for (`retry_after`) that are on, as the client holds them. */
 	let limits = $derived(session.limits ?? {});
@@ -614,16 +634,16 @@
 	let typingNames = $derived(session.typing
 		.filter((entry) => entry.room === paneRoom?.id && entry.from.user_id !== session.you?.user_id)
 		.map((entry) => directory.name(entry.from)));
-	// `server.agent` names the implementation, for debugging, not the server: the host is the label.
+	// `server.agent` names the implementation, for debugging, not the server: its host and path are the label.
 	/** What an archive's server says of it (`ext:archive`, ARCHIVE.md §4.1), while reading one. */
 	let archive = $derived(serverArchive(session.server));
-	let backendLabel = $derived(backendHost(archive?.server ?? serverInput) || 'Apron');
+	let backendLabel = $derived(serverLabel(archive?.server ?? serverInput) || 'Apron');
 	/** In place of the guest's read-only line, while reading an archive: whose it is, and from when. */
 	let archiveNote = $derived.by(() => {
 		if (!archive) return undefined;
 		const saved = new Date(archive.exportedAt ?? '');
 		const when = Number.isNaN(saved.getTime()) ? '' : `, saved ${saved.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`;
-		return `An export from ${backendHost(archive.server ?? '') || 'an Apron server'}${when}. It’s read-only.`;
+		return `An export from ${serverLabel(archive.server ?? '') || 'an Apron server'}${when}. It’s read-only.`;
 	});
 	/** How the connected server shows itself (§3.1): its title and avatar, never what it is known by (§1). */
 	let currentLook = $derived(client && session.server ? serverLook(session.server, client.url) : {});
@@ -816,9 +836,9 @@
 		untrack(() => void pushSettings.keepOff(chat));
 	});
 
-	// While Apron is in view, the app badge shows its own unread count; away, pushes' `unread` sets it.
+	// While Apron is in view, the app badge shows its own unread count (in muted rooms, only mentions); away, pushes' `unread` sets it.
 	$effect(() => {
-		const total = unread.total;
+		const total = unreadAlerting;
 		if (presence.visible && !previewMode) untrack(() => void setAppBadge(navigator, total));
 	});
 
@@ -1162,12 +1182,14 @@
 		// The view from this device's last visit, while this one signs in and catches up: only for the session
 		// saved here, which is the account it was kept for (a sign-in as anyone else drops it).
 		void viewKeeper.restore(chat, (view) => {
-			if (client === chat) session.prime(view);
+			if (client !== chat) return;
+			session.prime(view);
+			showDirectory(chat);
 		});
 		const unsubscribe = chat.subscribe((next) => {
 			serverUrl = chat.url;
 			session.apply(next, chat);
-			directory.apply(next, serverOrigin(chat.url), chat.url);
+			showDirectory(chat);
 			noteArrivals(next);
 		});
 		// Each session the client begins goes on from what this device kept for its server.
@@ -1236,9 +1258,16 @@
 		const any = [...offered, ...(session.server?.signup ?? [])];
 		const passkeyFirst = offered.includes('webauthn') ? offered.includes('guest') || !offered.includes('email') : !any.includes('email');
 		connectScheme = options.scheme ?? (options.signIn ? (passkeyFirst ? 'webauthn' : 'email') : undefined);
+		// Asked to sign in here, it opens at signing in; otherwise at choosing the server (another, a link's, or this one again).
+		connectChoosing = !options.scheme && !options.signIn;
 		links.failure = undefined;
 		if (options.name) displayName = options.name;
 		connectOpen = true;
+	}
+
+	/** A mention picker opened (the composer's, a message being edited, a description): who can be named, fresh, unless joined. */
+	function refreshMembers(): void {
+		if (!paneRoom?.joined) listMembers(MEMBERS_FRESH_MS);
 	}
 
 	/** Asks `room_list` for the pane's members, unless a listing was answered within `maxAge`. */
@@ -1258,6 +1287,11 @@
 		client.disconnect();
 		disconnected = true;
 		openConnect();
+	}
+
+	/** The directory, from the session: media loads by its server frame, the kept view's until the server sends its own. */
+	function showDirectory(chat: ChatClient): void {
+		directory.apply(session.snapshot, serverOrigin(chat.url), chat.url, session.server);
 	}
 
 	/** The connect form was submitted: whatever belonged to the previous backend goes. */
@@ -1504,12 +1538,18 @@
 			// History kept here stays, for when this account signs in again: deleting it is its own choice (Sign out's
 			// Keep local history, or Clear in Preferences).
 			session.forget();
+			if (chat) showDirectory(chat);
 		};
 	}
 
-	function connected(): void {
+	function connected(options: { remember?: boolean } = {}): void {
 		if (previewMode) return;
-		if (client) recentServers = rememberServer(recentServers, client.url, currentLook);
+		if (client) {
+			recentServers = rememberServer(recentServers, client.url, currentLook);
+			// How it signed in here is offered first next time, through signing out too: a sign-out's guest isn't kept.
+			const scheme = options.remember === false ? undefined : signedInScheme(client.snapshot());
+			if (scheme) saveLastSignIn(client.url, scheme);
+		}
 		connectOpen = false;
 		offeringLink = false;
 		disconnected = false;
@@ -1606,7 +1646,7 @@
 	/** Search can be opened: signed in, with rooms listed. */
 	let canSearch = $derived(Boolean(client) && session.ready);
 	/** Search's shortcut, as this platform writes it; none on a touch screen, which has no keys for it. */
-	const searchHint = globalThis.matchMedia?.('(pointer: coarse)').matches ? undefined : /Mac/.test(globalThis.navigator?.platform ?? '') ? '⌘F' : 'Ctrl+F';
+	const searchHint = globalThis.matchMedia?.('(pointer: coarse)').matches ? undefined : onMac() ? '⌘F' : 'Ctrl+F';
 	/** The shortcuts of search's two modes, beside their names; none on a touch screen. */
 	const searchKeys = searchHint === undefined ? undefined : searchHint === '⌘F' ? { rooms: '⌘K', messages: '⌘F' } : { rooms: 'Ctrl K', messages: 'Ctrl F' };
 
@@ -1758,9 +1798,10 @@
 	/**
 	 * Opens an Apron link from a message here, in place of the link.apron.chat
 	 * page (Appendix A.4). A link to this server, or one without a server, opens
-	 * its room, message or user. One to another server loads the page for it,
-	 * which asks before connecting to a server not used before. One with a token
-	 * asks before signing in, as a sign-in link does. Opening never acts.
+	 * its room, message or user. One to another server asks before switching
+	 * this tab to it (a plain click opens such a link in a new tab instead,
+	 * `apronLinkClicked`). One with a token asks before signing in, as a
+	 * sign-in link does. Opening never acts.
 	 */
 	function openApronLink(link: ApronLink): void {
 		if (!client || previewMode) return;
@@ -1790,13 +1831,21 @@
 		linked = { ...destination, server, room: destination.room };
 	}
 
-	/** A plain click on an Apron link anywhere on the page opens it here (`openApronLink`); a modified one is left to the browser. */
+	/**
+	 * A plain click on an Apron link anywhere on the page opens it here (`openApronLink`); a modified one is left to the browser.
+	 * A place on another server opens this app in a new tab instead (`elsewhereUrl`), so the connection here stays.
+	 * A token's link still opens here: signing in asks first, and a `state` is this tab's own.
+	 */
 	function apronLinkClicked(event: MouseEvent): void {
 		if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
 		const anchor = (event.target as Element | null)?.closest?.<HTMLAnchorElement>('a[href]');
 		const link = anchor ? readApronLink(anchor.getAttribute('href') ?? '') : undefined;
 		if (!link) return;
 		event.preventDefault();
+		if (client && !previewMode && !link.token && link.server !== undefined && link.server !== client.url) {
+			window.open(elsewhereUrl(window.location, link, homeServer()), '_blank', 'noopener');
+			return;
+		}
 		openApronLink(link);
 	}
 
@@ -1853,6 +1902,8 @@
 		selection.leave();
 		if (typingIn && typingIn.room !== (thread ?? roomId)) stopTyping();
 		composer?.reset();
+		if (!mentionAsk?.busy) mentionAsk = undefined;
+		editorsAsk = undefined;
 		mentions.clearUnseen();
 		mentions.clearRoom(roomId);
 		if (thread) mentions.clearRoom(thread);
@@ -1965,6 +2016,9 @@
 	// --- Composing ---
 
 	function composerInput(): void {
+		// The draft changed under the ask: Send asks again about what it mentions then.
+		if (mentionAsk && !mentionAsk.busy) mentionAsk = undefined;
+		editorsAsk = undefined;
 		if (!client || !paneRoom) return;
 		drafts.saveText();
 		// A live message shows itself as it is typed: no typing indicator besides.
@@ -1990,15 +2044,104 @@
 	}
 
 	/**
+	 * Holds the draft back when it mentions people who aren't in the open room or thread, and you may add them: asks
+	 * whether to first (`mentionAsk`). Those it mentions are the people its chips name; a role (`@&role`) mentions
+	 * those here who hold it, so it asks about no one, unless no one else here holds it: then about everyone the
+	 * session knows with it. Never for a command, which says itself what it does with whom it names: only a draft that
+	 * goes as a message. True when it asked, and the draft waits.
+	 */
+	function askToAddMentioned(room: RoomSnapshot, text: string): boolean {
+		if (!canAddMembers || session.snapshot.memberChangesUnsupported) return false;
+		const action = composerAction(text, { command: session.capabilities.command, rooms: false });
+		if (action.kind !== 'message') return false;
+		const skip = (userId: string) => directory.isMe(userId) || isSystemId(userId) || isGuest(directory.person({ user_id: userId }) ?? { user_id: userId });
+		const memberIds = new Set((room.members ?? []).map((member) => member.user_id));
+		const withRoles = unheldRoleHolders(markdownRoles(action.text), Object.values(session.snapshot.users), memberIds, (userId) => directory.isMe(userId));
+		const userIds = absentMentions([...composerMentions, ...withRoles], room, skip);
+		if (!userIds.length) return false;
+		mentionAsk = { roomId: room.id, userIds, busy: false, text, files: stagedIds() };
+		return true;
+	}
+
+	/** The draft's staged files, as `mentionAsk.files` keeps them. */
+	function stagedIds(): string {
+		return drafts.files.map((file) => file.id).join(' ');
+	}
+
+	/**
+	 * The ask's Add and send: adds them (`room_join`, §4.2.2), then sends the draft, saying who the server wouldn't add.
+	 * Send waits meanwhile in that pane (`holdSend`). The draft goes only if, once they're in, its pane is open and it
+	 * is still the draft asked about; else it waits there to be sent, and asked about, again.
+	 */
+	async function addMentionedAndSend(): Promise<void> {
+		const ask = mentionAsk;
+		if (!client || !ask || ask.busy) return;
+		mentionAsk = { ...ask, busy: true };
+		const refused = await addMembers(client, ask.roomId, ask.userIds);
+		if (mentionAsk?.roomId === ask.roomId) mentionAsk = undefined;
+		if (refused.length) feedback.error(couldNotAdd(refused, (userId) => directory.name({ user_id: userId })));
+		if (paneRoom?.id !== ask.roomId) return;
+		composer?.focus();
+		if (drafts.text !== ask.text || stagedIds() !== ask.files) return;
+		// It goes, whoever was added, and mentions them, so a role no one here held mentions its holders now that
+		// they're here.
+		sendMessage(true, ask.userIds.filter((userId) => !refused.some((refusal) => refusal.userId === userId)));
+	}
+
+	/** Escape: an ask that isn't adding yet goes away, the draft unsent. True when there was one. */
+	function dismissMentionAsk(): boolean {
+		if (editorsAsk) {
+			editorsAsk = undefined;
+			return true;
+		}
+		if (!mentionAsk || mentionAsk.busy) return false;
+		mentionAsk = undefined;
+		return true;
+	}
+
+	/**
+	 * Before a message that mentions people and holds a checklist goes, asks whether they may edit its text, so they
+	 * can tick it (`ext:editors`): only where the server shares text, and only for a draft that goes as a message.
+	 * `added`: whom the ask to add who it mentions added. True when it asked, and the draft waits.
+	 */
+	function askEditors(room: RoomSnapshot, text: string, added: readonly string[]): boolean {
+		if (!session.editors || !session.canEdit) return false;
+		const action = composerAction(text, { command: session.capabilities.command, rooms: false });
+		if (action.kind !== 'message' || !hasTaskItems(action.text)) return false;
+		const userIds = [...new Set([...composerMentions, ...added])].filter((userId) => !directory.isMe(userId) && !isSystemId(userId));
+		if (!userIds.length) return false;
+		editorsAsk = { roomId: room.id, userIds, added: [...added], text, files: stagedIds() };
+		return true;
+	}
+
+	/** The ask's answer: the draft goes, editable by who it mentions or not, if it is still the draft asked about. */
+	function answerEditors(share: boolean): void {
+		const ask = editorsAsk;
+		editorsAsk = undefined;
+		composer?.focus();
+		if (!ask || paneRoom?.id !== ask.roomId || drafts.text !== ask.text || stagedIds() !== ask.files) return;
+		sendMessage(true, ask.added, share);
+	}
+
+	/**
 	 * Sends the composer's text: a message with the draft's mentions (§3.5) and
 	 * previews of its GitHub links as `link` embeds (§4.8.1), or
 	 * with capability `command` a command (§4.1), which `/nick`, `/join`, `/leave`,
 	 * `/topic`, `/kick` and `/invite` turn into the requests they spell. A
 	 * command's failure shows as a local notice in the pane, where its replies
 	 * land too.
+	 *
+	 * `asked`: the ask to add who it mentions was answered (MentionAddPrompt), so it goes as it is; `added`, whom that
+	 * added, which it mentions besides its chips, such as the holders of a role no one here held when it was written.
+	 * `editors`: the ask whether they may edit it was answered (EditorsPrompt), and how.
 	 */
-	function sendMessage(): void {
+	function sendMessage(asked = false, added: readonly string[] = [], editors?: boolean): void {
 		if (!client || !paneRoom || !canCompose) return;
+		// Adding who it mentions: it goes once they're in (`addMentionedAndSend`).
+		if (mentionAsk?.busy && mentionAsk.roomId === paneRoom.id) return;
+		// An ask adding elsewhere carries on there.
+		if (!mentionAsk?.busy) mentionAsk = undefined;
+		editorsAsk = undefined;
 		if (composingLive) {
 			liveComposer?.send();
 			composer?.focus();
@@ -2020,16 +2163,20 @@
 			return;
 		}
 		if (drafts.files.length) {
-			void sendFiles();
+			if (!asked && askToAddMentioned(paneRoom, drafts.text)) return;
+			if (editors === undefined && askEditors(paneRoom, drafts.text, added)) return;
+			void sendFiles(added, editors);
 			return;
 		}
 		if (!drafts.text.trim()) return;
+		if (!asked && askToAddMentioned(paneRoom, drafts.text)) return;
+		if (editors === undefined && askEditors(paneRoom, drafts.text, added)) return;
 		const chat = client;
 		const draft = drafts.text;
 		const roomId = paneRoom.id;
 		const reply = drafts.reply;
 		const originKey = draftKey(roomId);
-		const mentions = composerMentions;
+		const mentions = [...new Set([...composerMentions, ...added])];
 		const dismissed = drafts.dismissed;
 		const action = composerAction(draft, { command: snapshot.capabilities.command, rooms: session.canManageRooms, members: !snapshot.memberChangesUnsupported, append: snapshot.capabilities['embed:append'] }, mentions);
 		if (action.kind === 'live') {
@@ -2044,7 +2191,7 @@
 		if (action.kind === 'message') {
 			if (!action.text.trim()) return;
 			const embeds = linkPreviews.embeds(action.text, dismissed);
-			const post = () => feedback.track(chat.send(roomId, action.text, 'markdown', { ...options, ...(embeds.length ? { embeds } : {}) }), 'Sending…', restore);
+			const post = () => feedback.track(chat.send(roomId, action.text, 'markdown', { ...options, ...(embeds.length ? { embeds } : {}), ...(editors ? { ext: SHARED_TEXT } : {}) }), 'Sending…', restore);
 			const joining = joinFirst(chat, paneRoom);
 			if (joining) {
 				joining.then(post, (cause: unknown) => {
@@ -2155,6 +2302,9 @@
 			});
 		}
 		drafts.stage(staged);
+		// The draft changed under the ask: Send asks again about what it mentions then.
+		if (!mentionAsk?.busy) mentionAsk = undefined;
+		editorsAsk = undefined;
 		composer?.focus();
 	}
 
@@ -2165,7 +2315,11 @@
 	 * takes them as arguments instead (§4.1). A failed send gives the draft
 	 * back, files and all.
 	 */
-	async function sendFiles(): Promise<void> {
+	/**
+	 * `added`: whom the ask to add who it mentions added, which it mentions besides its chips; `editors`, whether
+	 * they may edit its text (`sendMessage`).
+	 */
+	async function sendFiles(added: readonly string[] = [], editors = false): Promise<void> {
 		if (!client || !paneRoom || !canCompose || !session.snapshot.capabilities['embed:upload']) return;
 		const chat = client;
 		const room = paneRoom;
@@ -2181,10 +2335,10 @@
 		const limits = attachmentLimits(action, media);
 		const refit = limits !== media.upload ? staged.map(({ file }) => prepareUpload(file, { limits })) : undefined;
 		const text = action.kind === 'message' ? action.text : draft;
-		const mentions = composerMentions;
+		const mentions = [...new Set([...composerMentions, ...added])];
 		const dismissed = drafts.dismissed;
 		const embeds = command ? [] : linkPreviews.embeds(text, dismissed);
-		const options = { ...(reply ? { replyTo: reply } : {}), ...(mentions.length ? { mentions } : {}), ...(embeds.length ? { embeds } : {}) };
+		const options = { ...(reply ? { replyTo: reply } : {}), ...(mentions.length ? { mentions } : {}), ...(embeds.length ? { embeds } : {}), ...(editors && !command ? { ext: SHARED_TEXT } : {}) };
 		clearComposer(roomId);
 		chat.sendTyping(roomId, false);
 		stopTyping();
@@ -2434,15 +2588,27 @@
 		return reactionChips(room?.timeline.reactions[event.message_id], session.you?.user_id, event.deleted === true, (user) => directory.name(user), directory.emojiImage);
 	}
 
+	/** The emoji you reacted with last, latest first: read the first time a row's toolbar asks for its quick reactions. */
+	let recentReactions: string[] | undefined;
+	/** The toolbar's quick reactions from them, made again only once they change: every row asks as the pointer reaches it. */
+	let quickList: readonly string[] | undefined;
+
 	function react(event: MessageRecord, emoji: string): void {
 		if (!client || !session.canReact || event.deleted) return;
+		// Adding one (not taking yours away) makes it your latest, first among the toolbar's quick reactions.
+		if (!reactedWith(reactionsFor(event), emoji)) {
+			saveRecentReactions((recentReactions = rememberReaction(recentReactions ?? loadRecentReactions(), emoji)));
+			quickList = undefined;
+		}
 		feedback.track(client.toggleReaction(event.message_id, emoji), 'Reacting…');
 	}
 
 	// --- Message rows ---
 
 	/** The test ids interop finds a message's parts by. */
-	const MESSAGE_TESTIDS: MessageTestids = { handle: 'sender-handle', reply: 'reply-reference', reactions: 'reactions', chip: 'reaction-chip', select: 'select-message', writing: 'message-writing', waiting: 'message-waiting', receipts: 'read-receipts' };
+	/** The embeds an editor of someone else's shared text sees: none, since only the text is theirs to change. */
+	const NO_EMBEDS: Embed[] = [];
+	const MESSAGE_TESTIDS: MessageTestids = { handle: 'sender-handle', reply: 'reply-reference', reactions: 'reactions', chip: 'reaction-chip', select: 'select-message', writing: 'message-writing', editedBy: 'message-edited-by', waiting: 'message-waiting', receipts: 'read-receipts' };
 
 	/** What every row reads from, each field only where a row needs it. */
 	const messageContext: MessageContext = {
@@ -2454,6 +2620,9 @@
 		},
 		get uploads() {
 			return session.uploads;
+		},
+		get editors() {
+			return session.editors;
 		}
 	};
 
@@ -2491,6 +2660,7 @@
 		})(view),
 		picking: (view) => emojiPicker.current !== undefined && emojiPicker.current === reactPick?.request && reactPick.id === view.id,
 		pickAnchor: emojiAnchor,
+		quick: () => (quickList ??= quickReactions((recentReactions ??= loadRecentReactions()))),
 		// Who reacted, read from the current chips, so the open list follows changes.
 		reactors: (view, emoji, anchor) => showReactors(anchor, emoji, () => {
 			const event = rowEvent(view);
@@ -2527,7 +2697,14 @@
 		// A user mention, or the sender's name or avatar, opens their profile card.
 		openProfile: openProfileFrom,
 		jump: jumpToMessage,
-		code: decorateCode
+		code: decorateCode,
+		toggleTask: (view, line, checked) => {
+			if (!client || !session.canEdit || !view.id) return false;
+			const handle = client.toggleTask(view.id, line, checked);
+			if (!handle) return false;
+			feedback.track(handle, 'Saving edit…');
+			return handle.promise.then(() => true, () => false);
+		}
 	};
 
 	// --- Reading ---
@@ -2801,18 +2978,41 @@
 		};
 	}
 
+	/** Where a message sits in the pane and what the viewer may do to it: whether it mentions them is worked out once, for both. */
+	function rowOf(event: MessageRecord, grouped: boolean): MessageRow {
+		const mention = mentionsMe(event, session.you);
+		return {
+			grouped,
+			reactions: reactionsFor(event),
+			mention,
+			pinged: mentions.pinged.includes(event.message_id),
+			highlighted: highlightedId === event.message_id,
+			selecting: selection.active,
+			selected: selection.has(event.message_id),
+			editing: editingId === event.message_id,
+			caps: capsFor(event),
+			seenBy: receipts.get(event.message_id)
+		};
+	}
+
 	/** What the toolbar offers: only what the server can do, and only on messages this viewer may change. */
 	function capsFor(event: MessageRecord): MessageCaps {
 		// Edits, moves and deletes are `message` requests: a reader who may not write makes none (`ext:permissions`).
-		const own = session.canEdit && !session.readOnly && isOwn(event, session.you);
+		const writes = session.canEdit && !session.readOnly;
+		const own = writes && isOwn(event, session.you);
+		// Someone else's message whose text its sender shares with those it mentions, you among them (`ext:editors`): you may edit its text, and nothing else.
+		const shared = writes && event.ext !== undefined && session.editors && mayEditText(event, session.you?.user_id);
 		return {
 			reply: canCompose && !event.deleted,
-			edit: own && !event.deleted,
+			edit: (own || shared) && !event.deleted,
 			startThread: canStartThreads && canCompose && !event.deleted && !activeThread && event.room_id === activeRoom?.id,
 			select: canSelect(event),
 			removeReply: own && Boolean(event.reply_to),
+			// Its author, or anyone it shares its text with, may tick its task list.
+			check: !event.deleted && (own || shared),
 			react: session.canReact && canCompose && !event.deleted,
-			link: !event.deleted
+			link: !event.deleted,
+			...(shared && !own ? { textOnly: true } : {})
 		};
 	}
 
@@ -2831,7 +3031,8 @@
 	}
 
 	/** Saves an edit: the new text, and any embeds removed or renamed in the editor, together. */
-	function saveEdit(event: MessageRecord, text: string, edits: EmbedEdits | undefined, mentions: string[]): void {
+	/** `mentions` undefined keeps the message's: an editor of shared text (`ext:editors`) changes only its text. */
+	function saveEdit(event: MessageRecord, text: string, edits: EmbedEdits | undefined, mentions: string[] | undefined): void {
 		if (!client || !session.canEdit) return;
 		feedback.track(client.editMessage(event.message_id, text, undefined, edits, mentions), 'Saving edit…');
 		endEdit();
@@ -2953,6 +3154,8 @@
 		if (!paneRoom || !canSelect(event)) return;
 		editingId = undefined;
 		composer?.reset();
+		if (!mentionAsk?.busy) mentionAsk = undefined;
+		editorsAsk = undefined;
 		selection.begin(paneRoom.id, event.message_id);
 	}
 
@@ -3130,7 +3333,7 @@
 <svelte:document onclick={mediaAskClick} onvisibilitychange={() => { presence.visibilityChanged(); refreshNotificationPermission(); if (document.visibilityState === 'hidden') { keepView(); void historyKeeper?.flush(); } }} />
 
 <svelte:head>
-	<title>{tabTitle(unread.total, presence.titleFlash)}</title>
+	<title>{tabTitle(unreadAlerting, presence.titleFlash)}</title>
 	<meta name="description" content="Apron, a chat frontend for the Apron Chat Protocol." />
 	<!-- Link previews. og.png is apron.chat's `npm run screenshot -- og`; absolute, as crawlers require. -->
 	<meta property="og:type" content="website" />
@@ -3163,9 +3366,9 @@
 	<AppShell viewport />
 {:else if connectOpen}
 	<ConnectScreen
-		{client} {session} bind:serverInput bind:displayName {passkeyUnavailable} {recentServers}
+		{client} {session} bind:serverInput bind:displayName {passkeyUnavailable} bind:recentServers
 		canCancel={!disconnected && (session.rooms.length > 0 || session.ready || offeringLink)} initialScheme={connectScheme}
-		initialError={links.failure?.error}
+		initialError={links.failure?.error} initialChoosing={connectChoosing} linked={offeringLink && linked ? { server: linked.server, room: linked.room } : undefined}
 		onconnect={leaveBackend} onconnected={connected} oncancel={() => { connectOpen = false; offeringLink = false; if (client) serverInput = client.url; }} onsignout={signedOut}
 	/>
 {:else}
@@ -3174,7 +3377,8 @@
 {#snippet editMessage(view: MessageView)}
 	{@const MessageEditor = messageEditor.component}
 	{@const event = rowEvent(view)}
-	{#if MessageEditor && event}<MessageEditor text={textOf(event)} embeds={embedsOf(event)} uploads={session.uploads} mentions={event.body?.mentions} {people} rooms={roomSuggestions} onsave={(text, edits, mentions) => saveEdit(event, text, edits, mentions)} oncancel={endEdit} onmention={() => { if (!paneRoom?.joined) listMembers(MEMBERS_FRESH_MS); }} />{/if}
+	<!-- Someone else's message that shares its text with you (`ext:editors`): only the text is yours to change. -->
+	{#if MessageEditor && event}<MessageEditor text={textOf(event)} embeds={view.caps?.textOnly ? NO_EMBEDS : embedsOf(event)} uploads={session.uploads} mentions={event.body?.mentions} {people} rooms={roomSuggestions} onsave={(text, edits, mentions) => saveEdit(event, text, edits, view.caps?.textOnly ? undefined : mentions)} oncancel={endEdit} onmention={refreshMembers} />{/if}
 {/snippet}
 <!-- The pane's history waiting as the server asked, where its messages will appear: it loads by itself at zero. -->
 {#snippet historyNotice()}{#if historyWait}<RateLimitNotice scope="history" until={historyWait.until} />{/if}{/snippet}
@@ -3202,7 +3406,7 @@
 	{#snippet sideToggle()}<PanelToggle side="left" panel="rooms" open={!sidebar.collapsed} ontoggle={() => sidebar.toggle()} />{/snippet}
 	{#snippet side()}
 		<Sidebar
-			drawRooms={sideDrawn} client={client!} {session} {backendLabel} serverLook={currentLook} serverAddress={client?.url} account={addedAccount} order={roomOrder} threads={listedThreads} {activeThread} mentions={mentions.byRoom} unread={unread.byRoom} bind:displayName {passkeyUnavailable}
+			drawRooms={sideDrawn} client={client!} {session} {people} {roomSuggestions} {backendLabel} serverLook={currentLook} serverAddress={client?.url} account={addedAccount} order={roomOrder} threads={listedThreads} {activeThread} mentions={mentions.byRoom} unread={unread.byRoom} bind:displayName {passkeyUnavailable}
 			notificationsEnabled={notificationsActive} notificationsSupported={notificationState !== 'unsupported'} notificationPermission={notificationState} notifyScopes={notifyScopes} onnotifications={toggleNotifications} onnotifyscopes={setNotifyScopes} ontestnotifications={testNotifications}
 			webPush={webPushKey(session.server) ? { supported: webPushAvailable, homeScreen: !webPushAvailable && needsHomeScreen(), enabled: webPushActive && !webPushHeldBy, ...(webPushHeldBy ? { heldBy: webPushHeldBy } : {}), ...(webPushServerKey ? {} : { signIn: true }), offered: webPushOffered, installable: canOfferInstall(installPrompt), ...(webPushError && webPushServerKey ? { error: webPushError } : {}) } : undefined} onwebpush={pushHere} oninstallapp={installApp}
 			pause={canPause ? { ...(pausedUntil !== undefined && isPaused(pausedUntil) ? { until: pausedUntil } : {}) } : undefined} onpause={pauseNotifications} onresume={() => client?.setMute(false) ?? Promise.resolve()}
@@ -3248,7 +3452,7 @@
 			{#if roomEditorOpen && editTarget && roomEditor.component}
 				{@const RoomEditor = roomEditor.component}
 				{#key editTarget.id}
-					<RoomEditor client={client!} room={editTarget} thread={Boolean(activeThread)} enabled={canCompose && session.canManageRooms} onclose={() => (roomEditorOpen = false)} />
+					<RoomEditor client={client!} room={editTarget} thread={Boolean(activeThread)} enabled={canCompose && session.canManageRooms} {people} rooms={roomSuggestions} onmention={refreshMembers} onclose={() => (roomEditorOpen = false)} />
 				{/key}
 			{/if}
 
@@ -3314,18 +3518,7 @@
 								<TimelineDivider kind="new" testid="new-divider" />
 							{/if}
 							<TimelineMessage
-								row={() => messageView(item.event, {
-									grouped: item.grouped,
-									reactions: reactionsFor(item.event),
-									mention: mentionsMe(item.event, session.you),
-									pinged: mentions.pinged.includes(item.event.message_id),
-									highlighted: highlightedId === item.event.message_id,
-									selecting: selection.active,
-									selected: selection.has(item.event.message_id),
-									editing: editingId === item.event.message_id,
-									caps: capsFor(item.event),
-									seenBy: receipts.get(item.event.message_id)
-								}, messageContext)}
+								row={() => messageView(item.event, rowOf(item.event, item.grouped), messageContext)}
 								on={messageHandlers}
 								testids={MESSAGE_TESTIDS}
 								editor={(view) => (view.editing && messageEditor.component ? editMessage : undefined)}
@@ -3373,6 +3566,26 @@
 			{:else if session.readOnly}
 				<ReadOnlyBar guest={!session.passkeySession} {passkeyUnavailable} archive={archiveNote} onsignin={() => openConnect({ signIn: true })} />
 			{:else}
+				<!--
+					The draft Send held back, for mentioning people who aren't here: add them first, or send it as it is. Here,
+					not beside the timeline's floating notices, which a scroll redraws (perf budget: scroll-timeline). A live
+					region that stays, so the ask is read out as it arrives while the focus stays in the composer.
+				-->
+				<div class="ap-shell-ask" aria-live="polite">
+					{#if mentionAsk && mentionAsk.roomId === paneRoom?.id && mentionAddNudge.component}
+						{@const MentionAddPrompt = mentionAddNudge.component}
+						<MentionAddPrompt
+							names={mentionAsk.userIds.map((userId) => directory.name({ user_id: userId }))} place={activeThread ? threadTitle(activeThread) : activeRoom.title} thread={Boolean(activeThread)}
+							busy={mentionAsk.busy} onadd={() => void addMentionedAndSend()} onsend={() => { sendMessage(true); composer?.focus(); }} oncancel={() => { dismissMentionAsk(); composer?.focus(); }}
+						/>
+					{:else if editorsAsk && editorsAsk.roomId === paneRoom?.id && editorsNudge.component}
+						{@const EditorsPrompt = editorsNudge.component}
+						<EditorsPrompt
+							names={editorsAsk.userIds.map((userId) => directory.name({ user_id: userId }))}
+							onshare={() => answerEditors(true)} onsend={() => answerEditors(false)} oncancel={() => { dismissMentionAsk(); composer?.focus(); }}
+						/>
+					{/if}
+				</div>
 				<Composer
 					bind:this={composer}
 					bind:value={drafts.text}
@@ -3380,7 +3593,7 @@
 					bind:dismissed={drafts.dismissed}
 					placeholder={activeThread ? `Reply in ${threadTitle(activeThread)}` : `Message ${activeRoom.title}`}
 					disabled={!paneSteady || session.readOnly}
-					holdSend={!canCompose}
+					holdSend={!canCompose || (mentionAsk?.busy === true && mentionAsk.roomId === paneRoom?.id)}
 					canUpload={session.capabilities['embed:upload'] && !composingLive}
 					live={composingLive}
 					uploadLimits={serverMedia(session.server).upload}
@@ -3388,13 +3601,13 @@
 					{people}
 					rooms={roomSuggestions}
 					reply={drafts.reply ? replyPreview(drafts.reply) : undefined}
-					oninput={composerInput} onsend={sendMessage} files={drafts.files} onfiles={stageFiles} onunstage={(id) => drafts.unstage(id)} onrename={(id, title) => drafts.rename(id, title)} oncancelreply={cancelReply} onup={focusNewestMessage}
-					onmention={() => { if (!paneRoom?.joined) listMembers(MEMBERS_FRESH_MS); }}
+					oninput={composerInput} onsend={() => sendMessage()} files={drafts.files} onfiles={stageFiles} onunstage={(id) => { drafts.unstage(id); if (!mentionAsk?.busy) mentionAsk = undefined; editorsAsk = undefined; }} onrename={(id, title) => drafts.rename(id, title)} oncancelreply={cancelReply} onescape={dismissMentionAsk} onup={focusNewestMessage}
+					onmention={refreshMembers}
 					waitUntil={composerWait}
 				/>
 			{/if}
 		{:else}
-			<NoRoom {session} onconnect={() => openConnect()} />
+			<NoRoom {session} server={serverLabel(client?.url ?? serverInput)} onconnect={() => openConnect()} onchangeserver={previewMode ? undefined : disconnect} />
 		{/if}
 	{/snippet}
 	{#snippet members()}
@@ -3411,6 +3624,7 @@
 		{#key start}
 			<NewThreadDialog room={start.room} title={start.title} description={start.description} moving={start.moving}
 				enabled={canStartThreads && canCompose && (!start.moving || session.canEdit)}
+				{people} rooms={roomSuggestions} onmention={refreshMembers}
 				oncreate={(thread) => createThread(start, thread)} onclose={() => (newThread = undefined)} />
 		{/key}
 	{/if}

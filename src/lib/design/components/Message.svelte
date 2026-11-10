@@ -3,12 +3,12 @@
 	import { longPress } from './hold';
 
 	const NONE: MessageHandlers = {};
+	const NO_QUICK: readonly string[] = [];
 </script>
 
 <script lang="ts">
-	import type { Snippet } from 'svelte';
+	import { flushSync, type Snippet } from 'svelte';
 	import Avatar from './Avatar.svelte';
-	import MessageActions from './MessageActions.svelte';
 	import MessageEmbeds from './MessageEmbeds.svelte';
 	import ReactionBar from './ReactionBar.svelte';
 	import ReadReceipts from './ReadReceipts.svelte';
@@ -16,14 +16,16 @@
 	import ReplyPreview from './ReplyPreview.svelte';
 	import RoleBadges from './RoleBadges.svelte';
 	import TypingDots from './TypingDots.svelte';
+	import * as icons from './ActionIcons.svelte';
+	import { messageDock, type DockClaim } from './message-dock.svelte';
 	import type { MessageAction, MessageEmbed, MessageTestids, MessageView } from './types';
 	import { times } from './util';
 
 	/**
 	 * One message row, drawn from a MessageView. The header, body and reactions are its own; the quote, the messages,
 	 * rooms and threads its links point to, the embeds, the hover toolbar and the editor are parts it adds only to the
-	 * rows that have them. The toolbar is built the first time a pointer or focus reaches the row, since it only shows
-	 * then.
+	 * rows that have them. The toolbar is the dock's (`message-dock.svelte.ts`), the only one, moved into whichever row a
+	 * pointer, focus or long press reaches; a row reached while another is using it shows none until reached again.
 	 */
 	interface Props {
 		view: MessageView;
@@ -36,7 +38,17 @@
 	}
 	let { view, on = NONE, testids, editor, embed }: Props = $props();
 
-	let engaged = $state(false);
+	/**
+	 * It holds the dock: its toolbar is in the row, in its slot. Not state: moving the toolbar between rows changes
+	 * neither row's markup, so going back and forth costs only what differs between their toolbars.
+	 */
+	let docked = false;
+	/** The row has held the dock: its slot is drawn, and stays for the next time (`dockSlot`). */
+	let reached = $state(false);
+	/** That slot, while drawn. */
+	let slot: HTMLElement | undefined;
+	/** Its hold on the dock, made the first time it's reached. */
+	let claim: DockClaim | undefined;
 	/** The last press on the row was a touch: its toolbar shows only once a long press opens it (`held`). */
 	let touch = $state(false);
 	/**
@@ -48,6 +60,14 @@
 	let swallow = false;
 	/** The long press this row started (`longPress`). */
 	let pressed: object | undefined;
+	/** The toolbar's quick reactions (`on.quick`), read as the pointer or focus arrives, so a press doesn't reorder them under it. */
+	let quickEmoji = $state<readonly string[]>(NO_QUICK);
+
+	function readQuick(): void {
+		const next = on.quick?.() ?? NO_QUICK;
+		if (next === quickEmoji) return;
+		if (next.length !== quickEmoji.length || next.some((emoji, i) => emoji !== quickEmoji[i])) quickEmoji = next;
+	}
 
 	const t = $derived(times(view.timestamp, view.time));
 	const quoted = $derived(Boolean(view.reply) && !view.deleted);
@@ -56,35 +76,77 @@
 	const checkable = $derived(Boolean(view.selecting && view.caps?.select));
 	const caps = $derived(view.caps);
 	const actionable = $derived(caps !== undefined && (caps.reply || caps.edit || caps.removeReply || caps.react || caps.startThread || caps.link || caps.select));
-	const toolbar = $derived(engaged && !view.editing && !view.selecting && actionable);
+	/** It has a toolbar to show: not in select mode or the editor, and something it may do. */
+	const showable = $derived(!view.editing && !view.selecting && actionable);
+
+	/** The row was reached while another was using the dock: the pointer moving over it asks again. */
+	let wanting = false;
+
+	/** Takes the dock for the row, unless another row is using it; `taking` (a long press) takes it all the same. */
+	function takeBar(taking = false): void {
+		if (docked || !showable) return;
+		claim ??= { bar: () => (showable ? { ...actions(), touch: held } : undefined), pinned: () => held, lost: () => (docked = false) };
+		docked = messageDock.claim(claim, taking);
+		wanting = !docked;
+		if (!docked) return;
+		// Into its slot now, from the event that reached it; the first time, the slot takes it as it's drawn.
+		if (slot) slot.append(messageDock.host);
+		else reached = true;
+	}
 
 	/**
-	 * The toolbar's actions, in order; the rarer ones wait behind ⋯. Reply's and Edit's labels name them in apron.css too,
-	 * which boxes the first letter of each (`r`, `e`) for the keyboard: change one, change both. Touch's menu (`held`) keeps only Reply and React
-	 * up front, with everything else behind ⋯, and offers Copy text, since its rows take no text selection.
+	 * The dock's slot in the row, drawn the first time the row holds it and kept: the toolbar moves in whenever the row
+	 * takes it, and is let go should the row go while holding it, so a picker its React opened closes.
 	 */
-	function actions(): { items: MessageAction[]; more?: MessageAction[] } {
+	function dockSlot(node: HTMLElement): () => void {
+		const mine = claim!;
+		slot = node;
+		if (docked) node.append(messageDock.host);
+		return () => {
+			slot = undefined;
+			messageDock.release(mine);
+		};
+	}
+
+	/**
+	 * The toolbar's actions, in order: React first, beside the quick reactions; the rarer ones wait behind ⋯. Each
+	 * shows as its icon, its `key` (Reply's `r`, Edit's `e`, which `keydown` handles) badged for the keyboard. Touch's
+	 * menu (`held`) keeps only React and Reply up front, with everything else behind ⋯, and offers Copy text, since its
+	 * rows take no text selection.
+	 */
+	function actions(): { quick: MessageAction[]; items: MessageAction[]; more?: MessageAction[] } {
 		const can = caps!;
-		const unreplied: MessageAction | undefined = view.deleted && can.removeReply ? { id: 'unreply', label: 'Remove reply reference', glyph: 'Remove reply', onclick: () => on.removeReply?.(view) } : undefined;
-		const reply: MessageAction | undefined = can.reply ? { id: 'reply', label: 'Reply to message', glyph: 'Reply', onclick: () => on.reply?.(view) } : undefined;
+		// One press reacts, as a chip does: pressed where the reaction is already yours (❤ and ❤️ are one).
+		const bare = (emoji: string) => emoji.replace(/\uFE0F/g, '');
+		const mine = new Set((view.reactions ?? []).filter((c) => c.mine).map((c) => bare(c.emoji)));
+		const quick: MessageAction[] = can.react && !view.deleted
+			? quickEmoji.map((emoji) => ({ id: `quick:${emoji}`, label: `React with ${emoji}`, title: emoji, glyph: emoji, pressed: mine.has(bare(emoji)), onclick: (event: MouseEvent) => {
+				on.react?.(view, emoji);
+				// On touch's menu, reacting is done with it, as a pick from the picker is.
+				const row = (event.currentTarget as HTMLElement).closest<HTMLElement>('.ap-msg');
+				if (held && row) release(row);
+			} }))
+			: [];
+		const unreplied: MessageAction | undefined = view.deleted && can.removeReply ? { id: 'unreply', label: 'Remove reply reference', title: 'Remove reply', glyph: 'Remove reply', icon: icons.unlink, onclick: () => on.removeReply?.(view) } : undefined;
+		const reply: MessageAction | undefined = can.reply ? { id: 'reply', label: 'Reply to message', title: 'Reply', glyph: 'Reply', icon: icons.reply, key: 'R', onclick: () => on.reply?.(view) } : undefined;
 		const react: MessageAction | undefined = can.react && !view.deleted
-			? { id: 'react', label: 'React', title: 'React', popup: true, expanded: on.picking?.(view), attach: on.pickAnchor, onclick: (event) => on.pick?.(view, event.currentTarget as HTMLElement) }
+			? { id: 'react', label: 'React', title: 'React', icon: icons.smilePlus, popup: true, expanded: on.picking?.(view), attach: on.pickAnchor, onclick: (event) => on.pick?.(view, event.currentTarget as HTMLElement) }
 			: undefined;
-		const thread: MessageAction | undefined = can.startThread ? { id: 'thread', label: 'Start thread', title: 'Start thread', onclick: () => on.startThread?.(view) } : undefined;
-		const edit: MessageAction | undefined = can.edit ? { id: 'edit', label: 'Edit message', title: 'Edit', glyph: 'Edit', onclick: () => ((held = false), on.edit?.(view)) } : undefined;
-		const unreply: MessageAction | undefined = can.edit && view.reply ? { id: 'unreply', label: 'Remove reply reference', glyph: 'Remove reply', onclick: () => on.removeReply?.(view) } : undefined;
-		const select: MessageAction | undefined = can.select ? { id: 'select', label: 'Select message', title: 'Select', glyph: 'Select', testid: testids?.select, onclick: () => ((held = false), on.beginSelect?.(view)) } : undefined;
-		const copy: MessageAction | undefined = held && view.body && on.copyText ? { id: 'copy', label: 'Copy text', glyph: 'Copy text', done: { label: 'Text copied', glyph: 'Copied' }, onclick: () => on.copyText?.(view) } : undefined;
-		const link: MessageAction | undefined = can.link ? { id: 'link', label: 'Copy link to message', title: 'Copy link', glyph: 'Copy link', done: { label: 'Link copied', glyph: 'Copied' }, onclick: () => on.copyLink?.(view) } : undefined;
-		const remove: MessageAction | undefined = can.edit ? { id: 'delete', label: 'Delete message', title: 'Delete', glyph: 'Delete', danger: true, onclick: () => on.delete?.(view) } : undefined;
+		const thread: MessageAction | undefined = can.startThread ? { id: 'thread', label: 'Start thread', title: 'Thread', glyph: 'Thread', icon: icons.thread, onclick: () => on.startThread?.(view) } : undefined;
+		const edit: MessageAction | undefined = can.edit ? { id: 'edit', label: 'Edit message', title: 'Edit', glyph: 'Edit', icon: icons.pencil, key: 'E', onclick: () => ((held = false), on.edit?.(view)) } : undefined;
+		const unreply: MessageAction | undefined = can.edit && !can.textOnly && view.reply ? { id: 'unreply', label: 'Remove reply reference', title: 'Remove reply', glyph: 'Remove reply', icon: icons.unlink, onclick: () => on.removeReply?.(view) } : undefined;
+		const select: MessageAction | undefined = can.select ? { id: 'select', label: 'Select message', title: 'Select', glyph: 'Select', icon: icons.squareCheck, testid: testids?.select, onclick: () => ((held = false), on.beginSelect?.(view)) } : undefined;
+		const copy: MessageAction | undefined = held && view.body && on.copyText ? { id: 'copy', label: 'Copy text', title: 'Copy text', glyph: 'Copy text', icon: icons.copy, done: { label: 'Text copied', glyph: 'Copied' }, onclick: () => on.copyText?.(view) } : undefined;
+		const link: MessageAction | undefined = can.link ? { id: 'link', label: 'Copy link to message', title: 'Copy link', glyph: 'Copy link', icon: icons.link, done: { label: 'Link copied', glyph: 'Copied' }, onclick: () => on.copyLink?.(view) } : undefined;
+		const remove: MessageAction | undefined = can.edit && !can.textOnly ? { id: 'delete', label: 'Delete message', title: 'Delete', glyph: 'Delete', icon: icons.trash, danger: true, onclick: () => on.delete?.(view) } : undefined;
 		const present = (list: Array<MessageAction | undefined>) => list.filter((it): it is MessageAction => it !== undefined);
 		if (held) {
-			const front = present([reply, react]);
+			const front = present([react, reply]);
 			const rest = present([unreplied, thread, edit, select, copy, link, unreply, remove]);
-			return front.length ? { items: front, more: rest } : { items: rest };
+			return front.length ? { quick, items: front, more: rest } : { quick, items: rest };
 		}
 		const more = present([unreply, select, link, remove]);
-		return { items: present([unreplied, reply, react, thread, edit]), ...(more.length ? { more } : {}) };
+		return { quick, items: present([unreplied, react, reply, thread, edit]), ...(more.length ? { more } : {}) };
 	}
 
 	/** Where text is written, whose keys and clicks are its own: `x` there is a letter. */
@@ -145,6 +207,12 @@
 	 * between messages is the timeline's (the page's `timelineKey`).
 	 */
 	function keydown(event: KeyboardEvent): void {
+		// The keyboard on a row whose toolbar the pointer took elsewhere: it comes back, drawn now, for → to step into.
+		if (!docked && showable) {
+			readQuick();
+			takeBar();
+			if (docked) flushSync();
+		}
 		if (event.key === 'Escape' && held) {
 			event.preventDefault();
 			release(event.currentTarget as HTMLElement);
@@ -203,6 +271,8 @@
 	/** A finger that drifts is scrolling, not holding (`longPress`). */
 	function pointermove(event: PointerEvent): void {
 		longPress.move(event);
+		// The row the pointer is on once another's picker or menu shuts: its toolbar, without leaving and coming back.
+		if (wanting && event.pointerType === 'mouse') takeBar();
 	}
 
 	/** The finger lifted: this row's long press, if one is under way, doesn't fire. */
@@ -222,20 +292,72 @@
 	/** Opens touch's menu on the row, focused so that focus leaving it (a tap elsewhere, another's menu) puts it away. */
 	function hold(row: HTMLElement): void {
 		held = true;
-		engaged = true;
+		readQuick();
+		takeBar(true);
 		swallow = true;
 		row.focus({ preventScroll: true });
 	}
 
 	function engage(event: Event): void {
-		engaged = true;
+		readQuick();
+		takeBar();
 		if ((event as PointerEvent).pointerType === 'mouse') touch = false;
 	}
 
+	// What its body's decorations follow, each a value of its own: a new view with the same body (select mode, a
+	// reaction) changes none of them, so the code blocks aren't decorated again.
+	const bodyHtml = $derived(view.body?.html);
+	const bodyCode = $derived(Boolean(view.body?.code));
+	const bodyTasks = $derived(Boolean(view.body?.tasks));
+	const notice = $derived(Boolean(view.system && view.scope));
+
 	/** Its code blocks, decorated by `on.code` (a notice's get Copy buttons), again whenever the body changes. */
 	function code(node: HTMLElement): void | (() => void) {
-		void view.body?.html;
-		return on.code?.(node, Boolean(view.system && view.scope));
+		void bodyHtml;
+		return on.code?.(node, notice);
+	}
+
+	/**
+	 * A message's body: its code blocks and its task list checkboxes, in one attachment, so a row with neither runs
+	 * none. The checkboxes follow what may tick them in an effect of their own, so a change there (select mode, caps)
+	 * leaves the code blocks as they are; both start over when the body does.
+	 */
+	function decorate(node: HTMLElement): (() => void) | void {
+		const undo = bodyCode ? code(node) : undefined;
+		if (bodyTasks) $effect(() => tasks(node));
+		return typeof undo === 'function' ? undo : undefined;
+	}
+
+	/**
+	 * Its task list checkboxes, rendered disabled: enabled where you may tick them (`caps.check`: yours, or one that
+	 * shares its text with you, `ext:editors`) and `on.toggleTask` saves them, again whenever the body changes. A box that fails to save goes back as it was.
+	 */
+	function tasks(node: HTMLElement): void | (() => void) {
+		void bodyHtml;
+		const toggle = on.toggleTask;
+		if (!toggle || !view.caps?.check || view.deleted || view.selecting) return;
+		const boxes = node.querySelectorAll<HTMLInputElement>('input.ap-task');
+		for (const box of boxes) box.disabled = false;
+		const change = (event: Event): void => {
+			const box = event.target as HTMLInputElement;
+			if (!box.matches?.('input.ap-task')) return;
+			const line = Number(box.dataset.taskLine);
+			const checked = box.checked;
+			if (!Number.isInteger(line)) return;
+			// Its item looks done (or not) at once; the saved body, drawn again, says the same.
+			const item = box.closest('.ap-task-item');
+			item?.classList.toggle('ap-task-done', checked);
+			void Promise.resolve(toggle(view, line, checked)).then((saved) => {
+				if (saved || !box.isConnected || box.checked !== checked) return;
+				box.checked = !checked;
+				item?.classList.toggle('ap-task-done', !checked);
+			});
+		};
+		node.addEventListener('change', change);
+		return () => {
+			node.removeEventListener('change', change);
+			for (const box of boxes) box.disabled = true;
+		};
 	}
 </script>
 
@@ -298,17 +420,16 @@
 			{:else if editor}{@render editor(view)}
 			{:else}
 				<!-- An absent format is plain (§3.5); only an explicit `markdown` body is rendered as Markdown. -->
-				{#if view.body}<div class={['ap-msg-text', view.body.markdown ? 'ap-msg-markdown' : 'ap-msg-plain']} {@attach view.body.code && code}>{@html view.body.html}</div>{/if}
+				{#if view.body}<div class={['ap-msg-text', view.body.markdown ? 'ap-msg-markdown' : 'ap-msg-plain']} {@attach (view.body.code || view.body.tasks) && decorate}>{@html view.body.html}</div>{/if}
+				<!-- Who else saved its text (`ext:editors`): never while its live text is still coming, which no one else may save over. -->
 				{#if view.writing}<div class="ap-msg-writing" role="status" data-testid={testids?.writing}><TypingDots />Writing…</div>
-				{:else if view.waiting}<div class="ap-msg-writing" role="status" data-testid={testids?.waiting}>Waiting to stream…</div>{/if}
+				{:else if view.waiting}<div class="ap-msg-writing" role="status" data-testid={testids?.waiting}>Waiting to stream…</div>
+				{:else if view.editedBy}<div class="ap-msg-edited" data-testid={testids?.editedBy}>edited by {view.editedBy}</div>{/if}
 				{#if view.linkCards?.length}<div class="ap-msg-linkcards">{#each view.linkCards as card (card.href)}<LinkCard {card} data-testid={testids?.linkCard} />{/each}</div>{/if}
 				{#if view.embeds?.length}<MessageEmbeds embeds={view.embeds} {embed} onremove={(item) => on.removeEmbed?.(view, item)} />{/if}
 			{/if}
-			{#if !view.deleted && view.reactions?.length}<ReactionBar reactions={view.reactions} disabled={!caps?.react} add={false} ontoggle={(emoji) => on.react?.(view, emoji)} onreactors={(emoji, chip) => on.reactors?.(view, emoji, chip)} data-testid={testids?.reactions} chipTestid={testids?.chip} />{/if}
+			{#if !view.deleted && view.reactions?.length}<ReactionBar reactions={view.reactions} disabled={!caps?.react} add={Boolean(on.pick) && !view.editing && !view.selecting} adding={on.picking?.(view)} addAnchor={on.pickAnchor} onopen={(anchor) => on.pick?.(view, anchor)} ontoggle={(emoji) => on.react?.(view, emoji)} onreactors={(emoji, chip) => on.reactors?.(view, emoji, chip)} data-testid={testids?.reactions} chipTestid={testids?.chip} />{/if}
 		</div>
-		{#if toolbar}
-			{@const { items, more } = actions()}
-			<div class="ap-msg-actions"><MessageActions {items} {more} touch={held} /></div>
-		{/if}
+		{#if reached}<div class="ap-msg-dock" {@attach dockSlot}></div>{/if}
 	</article>
 {/if}

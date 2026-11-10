@@ -610,8 +610,11 @@ here: no desktop notifications, chime or title flash, and mentions that
 arrive meanwhile don't alert once it ends. The server sends no pushes with
 messages.
 
-A `status` with a `room_id` mutes that room and its threads, mentions
-included: they don't notify, chime or flash the title. It applies whether or
+A `status` with a `room_id` mutes that room and its threads: what's said
+there doesn't notify or count in the tab title or the app badge, though the
+room still shows its unread count. Mentions of you get through, as in other
+chat apps: they notify (while Mentions is checked), chime, flash the title
+and count in it. It applies whether or
 not the room is joined, and `false` (or `0`) ends it. The client has no
 control for it yet, but follows mutes set elsewhere.
 
@@ -634,8 +637,8 @@ here. **Send a test notification** under it shows a sample through the same
 browser path as the page's own.
 
 Until notifications are turned on or off on this device, the first mention
-you'd hear (not in a room you muted, nor while paused or on do not disturb)
-offers them once: a small prompt (the design system's `Nudge`), "Get
+you'd hear (in a room you muted too, but not while paused or on do not
+disturb) offers them once: a small prompt (the design system's `Nudge`), "Get
 notified when you're mentioned?", saying who mentioned you and where, and how
 far they'd reach (even when Apron is closed, where push works here; else while
 it's open). Its **Turn on** does what the switch does, from the same tap;
@@ -898,10 +901,13 @@ whole title or `room_id` first, then the start of one, the start of a word in
 the title, anywhere in it, and then the description. The ones you've joined come
 first, under Joined, then those you haven't, under Not joined, each then by how
 well it matches and then by when it was last active; with nothing typed it lists
-them all that way, at most fifty. Each is drawn as the rooms list draws it (a
-private room with its faces, a lock, what's new in it, a bell-off when muted, a
-thread you haven't joined with when it was last active), what matched marked,
-and a thread with its room under its title. `room:` (suggested as in Search
+them all that way, at most fifty, each group headed with how many it holds.
+Each has a # for a room, a hooked arrow for a thread or a private room's faces,
+its title with what matched marked (a lock if private; the titles of those you
+haven't joined muted), under it a thread's room or else what the room is about,
+and, for one you haven't joined, when it was last active; at its end a bell-off
+when muted and what's new in it, as the rooms list counts it. The two modes are
+tabs under the title. `room:` (suggested as in Search
 local history, rooms only) narrows it to the threads of that room, and → at the
 end of the field on a room does the same, putting in `room:#room_id `; Backspace
 there takes the filter away again. A room `room:` names has its threads you
@@ -1311,7 +1317,9 @@ this app never learns which server, room or message anyone opens:
 leaving out `server` when it is the one the page connects to anyway, and
 `thread`, `message` and `user` (whose profile card opens) without a room.
 Opening one, or pasting one into an open tab, goes there; one on another server
-opens the connect screen for it first. Each room or thread opened is a browser
+opens the connect screen for it first, at its address and where the link leads
+("A link opened this page to #general on this server."), contacting it only on
+**Continue**. Each room or thread opened is a browser
 history entry, so Back returns to the previous room or thread, and Forward the
 other way, until Back leaves the page from the first room opened. A room left since stays put
 for that step, and a thread left since is read without joining.
@@ -1746,9 +1754,27 @@ session, its history) stays, so connecting to it again doesn't ask to sign in
 again; a reload connects to it again too. In the preview and an export read on
 `/archive`, the pane has neither.
 
-The connect screen (**Connect to another server…**, for guests and accounts alike) takes a WebSocket URL or an HTTP(S) server
-base URL, a display name, and a sign-in choice among the schemes the server
-advertises (Guest by default; Passkey, below; Email, External and Token, further down). Once the server in the field
+The connect screen (**Connect to another server…**, for guests and accounts alike) works in two steps, so it only
+ever offers what the server offers. First it takes a WebSocket URL or an HTTP(S) server base URL, alone: no sign-in
+choice shows, since nothing is known of a server that hasn't answered, and nothing contacts it yet (a link to it, or
+an address typed, reaches no one). **Continue** (or picking a recent server) reads that server's `server` frame
+([PROTOCOL.md §3.1](https://github.com/shazow/apron/blob/main/PROTOCOL.md#31-server-frame)) on a connection of its
+own that sends nothing and closes once greeted, leaving the current session as it is, so Cancel still returns to it.
+An address that can't be reached, doesn't answer, or answers but not as an Apron server (no `apron` version, or no
+scheme in `auth`) says so, with **Try again**. The greeting is kept for as long as the page is open, so going back
+(**Change**, beside the server) or opening the screen again offers the same schemes without contacting the server
+again, and the connected server's own frame stands in for it. Then the form offers a display name and a sign-in
+choice among the schemes the server advertises (`auth`, then the rest of `signup`, in its order; chosen first is the
+way this device last signed in to that server, guest included and kept through signing out, marked "last used",
+else the server's first;
+Passkey, below; Email, External and Token, further down) that this app can use here: with one there is no
+**Sign in with** row, and with none (only passkeys in a browser without them, or schemes this app doesn't know) it
+says which the server asks for and offers **Change server**. A server whose greeting says it only reads, a served
+archive (`ext:archive` with `guest`, [ARCHIVE.md §4](../ARCHIVE.md#4-serving)), which signs every guest in as its own
+`you`, asks nothing more: **Continue** joins it as a guest, with no display name and no `me` after. Whether any other
+server lets a guest write is only known once signed in (`you.ext.permissions`), so the name is asked there as usual. A server speaking another protocol version gets a
+warning, and signing in goes on. Asked to sign in (the profile, the read-only bar, a held session), the screen opens
+at this second step for the connected server. Once the server in the field
 has answered, the top of the form shows it as it shows itself
 ([PROTOCOL.md §3.1](https://github.com/shazow/apron/blob/main/PROTOCOL.md#31-server-frame)):
 its `avatar` (or its initials) and its `title` (or its host), always above
@@ -1849,7 +1875,7 @@ sheet only ever opens for a tap:
   asked. A browser may refuse a sheet that long after the tap: the panel
   then says "Connected. Tap again to continue with your passkey.", ready
   on that connection. Connected as a guest, **Stay a guest** leaves the
-  panel as it is. On Guest, **Connect** connects without a ceremony.
+  panel as it is. On Guest, **Join** connects without a ceremony.
 - Connected, the sign-in hint says each server has its own accounts, and
   names the server in the form by its host (as code): a passkey saved for
   another server is no account here. A sign-in whose sheet is dismissed

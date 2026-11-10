@@ -24,7 +24,7 @@
 		faces?: Face[];
 		/**
 		 * Muted (§4.5 `mute` with its `room_id`): a bell-off at the end of the row, before its count, and its news stays quiet: no bold name, and
-		 * a grey count, mentions too.
+		 * a grey count, but for a mention of you, which bolds it and shows the orange @ count as in a room that isn't muted.
 		 */
 		muted?: boolean;
 		/** Unread messages from others: a bold name and an ink count. */
@@ -54,13 +54,8 @@
 		expandTestid?: string;
 		/** Classes for the row's button, added to its own. */
 		class?: ClassValue;
-		/** One of a listbox's options, such as a search's result, rather than a button (RoomRow): its `id`, whether the keyboard is on it, and the pointer coming onto it. */
-		option?: { id: string; selected: boolean };
-		onhover?: () => void;
-		/** Its name in runs, what a search found marked. */
-		parts?: { text: string; match: boolean }[];
 	}
-	let { room, name, topic, private: isPrivate, faces, muted = false, unread, mentions, active, loading, onselect, onleave, onnewthread, onexpand, listed, title, keyshortcuts, unreadTestid, newThreadTestid, expandTestid, option, onhover, parts, class: className }: Props = $props();
+	let { room, name, topic, private: isPrivate, faces, muted = false, unread, mentions, active, loading, onselect, onleave, onnewthread, onexpand, listed, title, keyshortcuts, unreadTestid, newThreadTestid, expandTestid, class: className }: Props = $props();
 	const shown = $derived(roomName(name, room));
 
 	/** The … goes once it has unfolded the threads: keyboard focus moves to the row's button rather than dropping to the page. */
@@ -80,9 +75,9 @@
 {/snippet}
 
 <RoomRow
-	{room} noun="room" label={shown} private={isPrivate} {muted} {active} {listed} {title} {onselect} {onleave} {keyshortcuts} {option} {onhover} {parts} lead={faces?.length ? lead : undefined} {lines} start={onnewthread || onexpand ? start : undefined}
-	class={[(unread || mentions) && !muted && 'ap-room-unread', faces?.length && 'ap-room-faced', className]}
+	{room} noun="room" label={shown} private={isPrivate} {muted} {active} {listed} {title} {onselect} {onleave} {keyshortcuts} lead={faces?.length ? lead : undefined} {lines} start={onnewthread || onexpand ? start : undefined}
+	class={[(mentions || (unread && !muted)) && 'ap-room-unread', faces?.length && 'ap-room-faced', className]}
 >
-	<UnreadCount unread={unread ?? 0} mentions={mentions ?? 0} quiet={muted} noun="message" testid={unreadTestid} />
+	<UnreadCount unread={unread ?? 0} mentions={mentions ?? 0} noun="message" testid={unreadTestid} />
 	{#if loading}<span class="ap-room-loading" aria-label="Loading history">…</span>{/if}
 </RoomRow>

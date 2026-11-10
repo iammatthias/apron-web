@@ -59,14 +59,14 @@ test.describe('the server frame: title, description and avatar (§3.1), and the 
 		await expect(page.locator('.ap-shell-sidehead-server')).toHaveAttribute('title', 'wss://server.apron.chat/');
 		await expect(page.locator('img.ap-shell-sidehead-avatar')).toHaveAttribute('src', GREEN);
 
-		await preview.openConnect();
+		await preview.openConnect({ signIn: true });
 		const server = page.getByTestId('connect-server');
 		await expect(server).toContainText('Mock Chat');
 		await expect(server.locator('.ap-connect-address')).toHaveText('wss://server.apron.chat/');
 		await expect(server.locator('img')).toHaveAttribute('src', GREEN);
 		await expect(page.locator('.ap-connect-server-desc strong')).toHaveText('tests');
 		// Recent: this server once, by its address, with the title it sent last; the copycat with its own address.
-		const recent = page.getByRole('group', { name: 'Recent backends' }).getByRole('button');
+		const recent = page.getByRole('group', { name: 'Recent servers' }).locator('.ap-connect-recent-item');
 		await expect(recent).toHaveCount(2);
 		await expect(recent.nth(0)).toContainText('Mock Chat');
 		await expect(recent.nth(0).locator('.ap-connect-address')).toHaveText('wss://server.apron.chat/');
@@ -80,7 +80,7 @@ test.describe('the server frame: title, description and avatar (§3.1), and the 
 		// Its host once, beside its initials.
 		await expect(page.locator('.ap-shell-sidehead-host')).toHaveCount(0);
 		await expect(page.locator('.ap-shell-sidehead-initials')).toHaveText('S');
-		await preview.openConnect();
+		await preview.openConnect({ signIn: true });
 		await expect(page.getByTestId('connect-server')).toContainText('server.apron.chat');
 		await expect(page.getByTestId('connect-server').locator('.ap-connect-address')).toHaveText('wss://server.apron.chat/');
 	});
@@ -444,7 +444,7 @@ test.describe('text direction (§3.5.2)', () => {
 	test('shows none in the server\'s title and description where it is picked', async ({ preview, page }) => {
 		await preview.openRoot({ server: { title: `Mock${RLO} Chat`, description: `Where${RLO} **we** talk.` } });
 		await expect(page.locator('.ap-shell-sidehead-name')).toHaveText('Mock Chat');
-		await preview.openConnect();
+		await preview.openConnect({ signIn: true });
 		await expect(page.getByTestId('connect-server')).toContainText('Mock Chat');
 		await expect(page.locator('.ap-connect-server-desc')).toHaveText('Where we talk.');
 		expect(await overridesShown(page)).toEqual([]);

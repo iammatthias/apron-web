@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { pushIdFor, loadRecentServers, refreshRecentServer, rememberServer, hideDescription, loadAppearance, loadShutMemberSections, saveShutMemberSections, loadSidebarFolds, saveSidebarFolds, loadHiddenDescriptions, loadAddedRooms, saveAddedRooms, loadThreadFolds, saveThreadFolds, loadRoomOrder, saveRoomOrder, showDescription, descriptionHidden, loadNotificationsEnabled, loadNotifyScopes, loadWebPushAccounts, notificationsChosen, loadWebPushOwner, saveAppearance, saveNotificationsEnabled, saveNotifyScopes, saveWebPushEnabled, saveWebPushOwner } from './storage';
+import { pushIdFor, loadLastSignIn, saveLastSignIn, loadRecentServers, refreshRecentServer, rememberServer, starServer, forgetServer, hideDescription, loadAppearance, loadShutMemberSections, saveShutMemberSections, loadSidebarFolds, saveSidebarFolds, loadHiddenDescriptions, loadAddedRooms, saveAddedRooms, loadThreadFolds, saveThreadFolds, loadRoomOrder, saveRoomOrder, showDescription, descriptionHidden, loadNotificationsEnabled, loadNotifyScopes, loadWebPushAccounts, notificationsChosen, loadWebPushOwner, saveAppearance, saveNotificationsEnabled, saveNotifyScopes, saveWebPushEnabled, saveWebPushOwner } from './storage';
 import { notifyAccount } from './notify-scopes';
 import { memoryStorage } from '$lib/test/storage';
 
@@ -50,6 +50,49 @@ describe('recent servers', () => {
 		expect(refreshRecentServer(recent, 'wss://new.example/', { title: 'New' })).toBe(recent);
 		expect(JSON.parse(values.get('apron.recentServers')!)).toEqual(recent);
 	});
+
+	const urls = (recent: { url: string }[]) => recent.map((server) => server.url.replace(/^wss:\/\/|\/$/g, ''));
+	const connectTo = (recent: ReturnType<typeof loadRecentServers>, ...hosts: string[]) => hosts.reduce((list, host) => rememberServer(list, `wss://${host}/`), recent);
+
+	it('keeps five servers, newest first, and every starred one besides at the top, in the order they were starred', () => {
+		let recent = connectTo([], 'a', 'b', 'c');
+		recent = starServer(recent, 'wss://a/', true);
+		recent = starServer(recent, 'wss://c/', true);
+		expect(urls(recent)).toEqual(['a', 'c', 'b']);
+		expect(recent[0]).toEqual({ url: 'wss://a/', starred: true });
+		// Connecting to a starred server keeps its place; the others push the oldest unstarred out past five.
+		recent = connectTo(recent, 'd', 'e', 'f', 'g', 'h', 'c');
+		expect(urls(recent)).toEqual(['a', 'c', 'h', 'g', 'f', 'e', 'd']);
+		expect(urls(loadRecentServers())).toEqual(urls(recent));
+		// Unstarred, it is the newest of the rest, and the oldest of those goes.
+		recent = starServer(recent, 'wss://a/', false);
+		expect(urls(recent)).toEqual(['c', 'a', 'h', 'g', 'f', 'e']);
+		// A new look keeps the star.
+		recent = refreshRecentServer(recent, 'wss://c/', { title: 'C' });
+		expect(recent[0]).toEqual({ url: 'wss://c/', title: 'C', starred: true });
+		// Starring what isn't listed, or again, changes nothing.
+		expect(starServer(recent, 'wss://zzz/', true)).toBe(recent);
+		expect(starServer(recent, 'wss://c/', true)).toBe(recent);
+	});
+
+	it('forgets a server, starred or not', () => {
+		let recent = starServer(connectTo([], 'a', 'b'), 'wss://a/', true);
+		recent = forgetServer(recent, 'wss://a/');
+		expect(urls(recent)).toEqual(['b']);
+		recent = forgetServer(recent, 'WSS://B:443/');
+		expect(recent).toEqual([]);
+		expect(loadRecentServers()).toEqual([]);
+		expect(forgetServer(recent, 'wss://b/')).toBe(recent);
+	});
+
+	it('loads starred servers first, past the five kept', () => {
+		values.set('apron.recentServers', JSON.stringify([
+			...['a', 'b', 'c', 'd', 'e', 'f'].map((host) => ({ url: `wss://${host}/` })),
+			{ url: 'wss://s/', starred: true },
+			{ url: 'wss://t/', starred: 'yes' }
+		]));
+		expect(urls(loadRecentServers())).toEqual(['s', 'a', 'b', 'c', 'd', 'e']);
+	});
 });
 
 describe('preference storage', () => {
@@ -70,6 +113,19 @@ describe('preference storage', () => {
 		expect(loadShutMemberSections()).toEqual([]);
 	});
 
+
+	it('keeps how each server was last signed in to, by its address, the newest last, and ignores what isn’t a scheme', () => {
+		expect(loadLastSignIn('wss://chat.example/')).toBeUndefined();
+		saveLastSignIn('WSS://Chat.Example:443', 'email');
+		expect(loadLastSignIn('wss://chat.example/')).toBe('email');
+		saveLastSignIn('wss://other.example/', 'guest');
+		saveLastSignIn('wss://chat.example/', 'webauthn');
+		expect(JSON.parse(values.get('apron.lastSignIn')!)).toEqual({ 'wss://other.example/': 'guest', 'wss://chat.example/': 'webauthn' });
+		values.set('apron.lastSignIn', '{"wss://chat.example/":7}');
+		expect(loadLastSignIn('wss://chat.example/')).toBeUndefined();
+		values.set('apron.lastSignIn', 'not json');
+		expect(loadLastSignIn('wss://chat.example/')).toBeUndefined();
+	});
 
 	it('keeps notifications off until chosen', () => {
 		expect(loadNotificationsEnabled()).toBe(false);

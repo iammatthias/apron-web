@@ -1,6 +1,6 @@
 import type { ChatClient } from '$lib/protocol/client';
 import type { ClientSnapshot, ConnectionStatus, RoomSnapshot } from '$lib/protocol/client-types';
-import { canEdit, canManageRooms, canReact, capabilitiesOf } from '$lib/protocol/client-views';
+import { canEdit, canManageRooms, canReact, capabilitiesOf, hasEditors } from '$lib/protocol/client-views';
 import type { Identity, ServerParams } from '$lib/protocol/types';
 import { connectionStateOf, isSessionReady, reconnectErrorOf } from './connection';
 
@@ -325,6 +325,8 @@ export class SessionView {
 
 	/** Edit, move, and delete (capability `edit`). */
 	readonly canEdit = $derived(canEdit(this.server));
+	/** Share a message's text with the users it mentions, and save the text others share (`ext:editors`). */
+	readonly editors = $derived(hasEditors(this.server));
 	/** Create and update rooms and threads (capability `rooms`). */
 	readonly canManageRooms = $derived(canManageRooms(this.server));
 	/** You only read (`ext:permissions` with `write: false`): no composer, reactions, joins, or new threads. */
@@ -357,6 +359,8 @@ export class SessionView {
 		this.live.take(next);
 		// A view held for someone else (kept on this device for the account that was signed in) isn't this one's.
 		if (this.held?.you && next.you && this.held.you.user_id !== next.you.user_id) this.forget();
+		// The server's own frame replaces the kept view's: what it says holds through a drop before the session is ready.
+		if (this.primed && this.held && next.server && this.held.server !== next.server) this.held = { ...this.held, server: next.server };
 		// Kept only through a drop (`disconnectedAt`): a restart, a sign-out or a sign-in elsewhere starts over.
 		if (isSessionReady(next)) this.lastReady = next;
 		else if (next.disconnectedAt === undefined || next.status === 'offline' || next.held || (this.lastReady?.you && next.you && this.lastReady.you.user_id !== next.you.user_id)) this.lastReady = undefined;

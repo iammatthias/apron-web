@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import type { MentionPerson } from '$lib/protocol/markdown';
 	import type { RoomSuggestion } from '$lib/ui/room-autocomplete';
 	import { emojiAnchor, emojiPicker } from '$lib/ui/emoji-picker.svelte';
@@ -10,6 +10,7 @@
 	import { loadableOg } from './embeds/og';
 	import { pastedFiles } from '$lib/ui/file-transfer';
 	import { clockLabel } from '$lib/ui/time';
+	import { handheld, onMac } from '$lib/ui/handheld';
 	import type { StagedFile as Staged } from '$lib/ui/pane-drafts.svelte';
 	import MentionText from './MentionText.svelte';
 	import Embed from './embeds/Embed.svelte';
@@ -18,6 +19,7 @@
 	import MessageField from './MessageField.svelte';
 	import { VoiceRecorder, type VoiceFormat } from '$lib/ui/voice-recorder.svelte';
 	import type { ComposerField } from '$lib/design/components/types';
+	import { draftPreview, formatToolbar } from './lazy';
 
 	/** How long typing pauses before the draft's links are looked up; a paste looks them up at once. */
 	const PREVIEW_TYPING_PAUSE_MS = 800;
@@ -81,6 +83,8 @@
 		onrename: (id: string, title: string) => void;
 		/** Escape while replying (`reply`) cancels it too. */
 		oncancelreply: () => void;
+		/** Escape no picker took, before a reply's cancel, such as to put away an ask about the draft. True when it did something. */
+		onescape?: () => boolean;
 		/** ↑ in the empty field: the keyboard goes up to the messages. True when there was one to go to. */
 		onup?: () => boolean;
 		/** The mention picker opened: a moment to refresh who can be named. */
@@ -88,12 +92,21 @@
 		/** Sending waits until then, as the server asked (`retry_after`, epoch milliseconds): Send counts down, and the draft stays. */
 		waitUntil?: number;
 	}
-	let { value = $bindable(), mentions = $bindable([]), dismissed = $bindable([]), placeholder, disabled, holdSend = false, canUpload, files = [], uploadLimits, canCommand = false, live, people, rooms = [], reply, oninput, onsend, onfiles, onunstage, onrename, oncancelreply, onup, onmention, waitUntil }: Props = $props();
+	let { value = $bindable(), mentions = $bindable([]), dismissed = $bindable([]), placeholder, disabled, holdSend = false, canUpload, files = [], uploadLimits, canCommand = false, live, people, rooms = [], reply, oninput, onsend, onfiles, onunstage, onrename, oncancelreply, onescape, onup, onmention, waitUntil }: Props = $props();
 
 	/** The field: chips and autocomplete, as in the message editor. */
 	let field = $state<MessageField | undefined>();
 	let emojiButton = $state<HTMLButtonElement | undefined>();
 	const recorder = new VoiceRecorder();
+	/**
+	 * The full panel, for writing at length, with formatting: Expand offers it once the draft has a second line. Its formatting and
+	 * Preview load on demand as it opens, and it closes again as the draft is sent or the pane changes.
+	 */
+	let expanded = $state(false);
+	/** The full panel's Write or Preview. */
+	let previewing = $state(false);
+	/** Shown at the full panel's foot; not on a phone or tablet, whose keyboard has no Ctrl and whose Enter starts a line anyway. */
+	const sendKeys = handheld() ? undefined : [onMac() ? '⌘' : 'Ctrl', 'Enter'];
 
 	let recording = $derived(recorder.phase === 'recording');
 	/** The file picker's `accept`: the patterns the server takes, unless one is any type. */
@@ -116,13 +129,24 @@
 	let canRecord = $derived(canUpload && voice !== undefined && Boolean(navigator.mediaDevices?.getUserMedia));
 	let command = $derived(canCommand && isCommand(value) && !live);
 	let emojiOpen = $derived(emojiPicker.isOpenFor(emojiButton));
+	/**
+	 * Expand is offered once the draft has a second line and can be written; the design system's Composer leaves it
+	 * out for a command or live text, as it already tells those apart on every key. The field says when the draft
+	 * gains or loses a line (`multiline`), so typing on a line doesn't ask again.
+	 */
+	let canExpand = $derived(!expanded && !disabled && (field?.multiline() ?? false));
 	/** Bumped when a fetched preview arrives, so the previews below are redrawn. */
 	let previewsArrived = $state(0);
+	/**
+	 * The draft where it may hold a link (every one previewed has `://`), else empty: what link previews read, so a
+	 * draft without a link doesn't look for them again on every key.
+	 */
+	let linkText = $derived(value.includes('://') ? value : '');
 	/** The link embeds the draft will be sent with (a command takes none). */
 	let previews = $derived.by(() => {
 		void previewsArrived;
-		if (command || disabled) return [];
-		const embeds = linkPreviews.embeds(value, dismissed);
+		if (!linkText || command || disabled) return [];
+		const embeds = linkPreviews.embeds(linkText, dismissed);
 		return embeds.length && live ? [] : embeds;
 	});
 	/** Those as the design system's Composer takes them: their pictures only from where link previews may load from (each is drawn by `preview` below, which asks the same). */
@@ -131,14 +155,15 @@
 	$effect(() => linkPreviews.subscribe(() => previewsArrived++));
 	// Typed links are looked up once typing pauses, so a half-typed URL isn't.
 	$effect(() => {
-		const text = value;
-		if (command || disabled || linkPreviews.links(text).length === 0 || live) return;
+		const text = linkText;
+		if (!text || command || disabled || linkPreviews.links(text).length === 0 || live) return;
 		const timer = setTimeout(() => void linkPreviews.prefetch(text), PREVIEW_TYPING_PAUSE_MS);
 		return () => clearTimeout(timer);
 	});
 	// A sent or cleared draft forgets which previews were removed.
+	let blank = $derived(!value.trim());
 	$effect(() => {
-		if (!value.trim() && untrack(() => dismissed.length)) dismissed = [];
+		if (blank && untrack(() => dismissed.length)) dismissed = [];
 	});
 
 	export function focus(): void {
@@ -155,12 +180,21 @@
 	 * stay with the draft, which the page keeps per pane.
 	 */
 	export function reset(): void {
+		expanded = false;
+		previewing = false;
 		field?.reset();
 		emojiPicker.release(emojiButton);
 		stopRecording(false);
 	}
 
 	$effect(() => () => stopRecording(false));
+	/**
+	 * The draft was emptied from outside, as sending it does (Send, Ctrl+Enter, or the ask to add who it mentions): the
+	 * full panel closes with it. Emptied by typing, the panel stays, to write in.
+	 */
+	function cleared(): void {
+		if (expanded) setExpanded(false);
+	}
 	// The emoji picker lets go of its button when the button goes (`emojiAnchor`, as on a message's React).
 	$effect(() => (emojiButton ? emojiAnchor(emojiButton) : undefined));
 
@@ -171,10 +205,26 @@
 		onsend();
 	}
 
-	/** The field's keys no picker took: Escape cancels a reply, and ↑ in the empty field goes up to the messages. */
+	const expand = (): void => setExpanded(true);
+
+	/** Opens or closes the full panel around the same field, and puts the keyboard back in it, where it was. */
+	function setExpanded(open: boolean): void {
+		expanded = open;
+		previewing = false;
+		void tick().then(() => field?.focus());
+	}
+
+	/**
+	 * The field's keys no picker took: Escape puts away an ask about the draft, else closes the full panel, else cancels
+	 * a reply, and ↑ in the empty compact field goes up to the messages.
+	 */
 	function key(event: KeyboardEvent): boolean {
 		if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false;
-		if (event.key === 'Escape' && reply) oncancelreply();
+		if (event.key === 'Escape' && onescape?.()) {
+			// Taken: an ask about the draft went away, and the reply stays.
+		} else if (event.key === 'Escape' && expanded) setExpanded(false);
+		else if (expanded) return false;
+		else if (event.key === 'Escape' && reply) oncancelreply();
 		else if (!(event.key === 'ArrowUp' && !value && files.length === 0 && onup?.())) return false;
 		event.preventDefault();
 		return true;
@@ -250,11 +300,25 @@
 	liveTestid="live-tag"
 	emojiTestid="emoji-button"
 	sendTestid="send-button"
+	onexpand={canExpand ? expand : undefined}
+	{expanded}
+	oncollapse={() => setExpanded(false)}
+	toolbar={formatting}
+	{rendered}
+	{previewing}
+	onpreview={(on) => (previewing = on)}
+	{sendKeys}
+	multiline={field?.multiline() ?? false}
+	expandTestid="composer-expand"
+	panelTestid="composer-panel"
 />
 
 {#snippet editable({ placeholder, disabled }: ComposerField)}
-	<MessageField bind:this={field} bind:value bind:mentions {people} {rooms} {placeholder} {disabled} id="message-input" data-testid="message-input" pickerTestid="mention-picker" onsubmit={send} onkey={key} {oninput} {onmention} onpaste={paste} />
+	<MessageField bind:this={field} bind:value bind:mentions {people} {rooms} {placeholder} {disabled} newlineOnEnter={expanded} id="message-input" data-testid="message-input" pickerTestid="mention-picker" onsubmit={send} onkey={key} {oninput} oncleared={cleared} {onmention} onpaste={paste} />
 {/snippet}
+<!-- The full panel's parts, loaded on demand as it first opens: until they come, it is a tall field with Send. -->
+{#snippet formatting()}{#if formatToolbar.component}{@const FormatToolbar = formatToolbar.component}<FormatToolbar apply={(change) => field?.apply(change) ?? false} {disabled} />{/if}{/snippet}
+{#snippet rendered()}{#if draftPreview.component}{@const DraftPreview = draftPreview.component}<DraftPreview text={value} links />{/if}{/snippet}
 {#snippet replyText()}<MentionText text={reply?.text ?? ''} />{/snippet}
 {#snippet staged()}
 	{#each files as staged (staged.id)}

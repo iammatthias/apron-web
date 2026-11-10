@@ -80,11 +80,22 @@ test.describe('the server pane', () => {
 		expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('wss://server.apron.chat/');
 		await expect(pane.getByRole('button', { name: 'Copy the address' })).toBeVisible();
 		await pane.getByRole('button', { name: 'Connect to another server…', exact: true }).click();
-		await expect(page.getByRole('form', { name: 'Sign in' })).toBeVisible();
-		await expect(page.getByTestId('connect-server')).toContainText('Mock Chat');
+		const form = page.getByRole('form', { name: 'Sign in' });
+		await expect(form).toBeVisible();
 		await expect(pane).toHaveCount(0);
+		// It opens at choosing the server: its address alone, no way of signing in until it has answered.
+		await expect(page.getByTestId('server-url-input')).toHaveValue('wss://server.apron.chat/');
+		await expect(page.getByTestId('connect-server')).toHaveCount(0);
+		await expect(form.getByRole('radiogroup', { name: 'Sign in with' })).toHaveCount(0);
+		// Continue on the connected server needs no lookup: what it said shows, with Change to go back.
+		await form.getByRole('button', { name: 'Continue', exact: true }).click();
+		await expect(page.getByTestId('connect-server')).toContainText('Mock Chat');
+		await expect(page.getByTestId('server-url-input')).toHaveCount(0);
+		await expect(form.getByRole('radiogroup', { name: 'Sign in with' }).getByRole('radio')).toHaveText(['Guest', 'Passkey', 'Email']);
+		await page.getByTestId('connect-server').getByRole('button', { name: 'Change', exact: true }).click();
+		await expect(page.getByTestId('server-url-input')).toHaveValue('wss://server.apron.chat/');
 		// Cancel goes back to the chat as it was.
-		await page.getByRole('form', { name: 'Sign in' }).getByRole('button', { name: 'Cancel', exact: true }).click();
+		await form.getByRole('button', { name: 'Cancel', exact: true }).click();
 		await expect(page.getByTestId('connection-status')).toHaveText('Connected');
 	});
 
@@ -183,9 +194,88 @@ test.describe('the server pane', () => {
 		await expect(form.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0);
 		await expect(page.getByTestId('server-url-input')).toHaveValue('wss://server.apron.chat/');
 		// Connecting again opens it, and the chat comes back.
-		await form.getByRole('button', { name: /^(Connect|Done|Continue as guest)$/ }).first().click();
+		await form.getByRole('button', { name: 'Continue', exact: true }).click();
+		await form.getByRole('button', { name: 'Join', exact: true }).click();
 		await expect(page.getByTestId('connection-status')).toHaveText('Connected');
 		await expect(form).toHaveCount(0);
+	});
+});
+
+test.describe('the way last used to sign in', () => {
+	test.use(DEVICES.desktop);
+
+	test('is chosen first, and marked', async ({ preview, page }) => {
+		await page.addInitScript(() => localStorage.setItem('apron.lastSignIn', JSON.stringify({ 'wss://server.apron.chat/': 'email' })));
+		await preview.openRoot();
+		await preview.openConnect({ signIn: true });
+		const schemes = page.getByRole('form', { name: 'Sign in' }).getByRole('radiogroup', { name: 'Sign in with' });
+		await expect(schemes.getByRole('radio', { name: 'Email', exact: true })).toBeChecked();
+		await expect(page.getByRole('form', { name: 'Sign in' })).toContainText('Sign in with · last used: Email');
+		await expect(page.getByTestId('connect-email-input')).toBeVisible();
+	});
+});
+
+test.describe('a link to a server not used here', () => {
+	test.use(DEVICES.desktop);
+
+	const PIPER = 'wss://scene.apron.chat/piper';
+
+	/** Opens the app on its own server, then loads it again from a link to #eng on `PIPER`, as a link opens it in a new tab. */
+	async function openLink(preview: Preview, options: Parameters<Preview['openRoot']>[0]): Promise<void> {
+		await preview.openRoot(options);
+		await preview.page.goto(`${process.env.E2E_URL}/#server=${encodeURIComponent(PIPER)}&room=eng`);
+		await preview.page.reload();
+	}
+
+	test('shows its address alone and contacts it only on Continue, then offers just what it offers', async ({ preview, page }) => {
+		const opened: string[] = [];
+		await openLink(preview, { opened, servers: { [PIPER]: { auth: ['guest'], signup: undefined, title: 'Pied Piper' } } });
+		const form = page.getByRole('form', { name: 'Sign in' });
+		await expect(form).toBeVisible();
+		await expect(page.getByTestId('server-url-input')).toHaveValue(PIPER);
+		await expect(form).toContainText('A link opened this page to #eng on this server.');
+		// Nothing about signing in shows before the server has said what it offers, and it hasn't been asked.
+		await expect(form.getByRole('radiogroup', { name: 'Sign in with' })).toHaveCount(0);
+		await expect(page.getByTestId('connect-name-input')).toHaveCount(0);
+		expect(opened).not.toContain(PIPER);
+		await form.getByRole('button', { name: 'Continue', exact: true }).click();
+		await expect(page.getByTestId('connect-server')).toContainText('Pied Piper');
+		expect(opened).toContain(PIPER);
+		// One scheme: no Sign in with row, only what a guest needs.
+		await expect(form.getByRole('radiogroup', { name: 'Sign in with' })).toHaveCount(0);
+		await expect(page.getByTestId('connect-name-input')).toBeVisible();
+		await expect(form).toContainText('No token needed; the server picks a guest identity.');
+		await page.getByTestId('connect-name-input').fill('Ada');
+		await form.getByRole('button', { name: 'Join', exact: true }).click();
+		await expect(form).toHaveCount(0);
+		await expect(page.getByTestId('connection-status')).toHaveText('Connected');
+		// How it signed in is kept for next time.
+		expect(await page.evaluate(() => JSON.parse(localStorage.getItem('apron.lastSignIn') ?? '{}'))).toMatchObject({ [PIPER]: 'guest' });
+	});
+
+	test('joins a server that only reads (a served archive) on Continue, asking no name and sending none', async ({ preview, page }) => {
+		const sent: Record<string, any>[] = [];
+		await openLink(preview, { sent, servers: { [PIPER]: { auth: ['guest'], signup: undefined, title: 'Pied Piper', capabilities: ['history', 'rooms', 'ext:permissions', 'ext:archive'], ext: { archive: { server: PIPER } } } } });
+		const form = page.getByRole('form', { name: 'Sign in' });
+		await expect(page.getByTestId('connect-name-input')).toHaveCount(0);
+		const before = sent.length;
+		await form.getByRole('button', { name: 'Continue', exact: true }).click();
+		await expect(form).toHaveCount(0);
+		await expect(page.getByTestId('connection-status')).toHaveText('Connected');
+		const after = sent.slice(before);
+		expect(after.filter((frame) => frame.method === 'auth').map((frame) => frame.params.scheme)).toEqual(['guest']);
+		expect(after.filter((frame) => frame.method === 'me')).toEqual([]);
+	});
+
+	test('says when the address isn’t an Apron server, and Cancel stays where the page was', async ({ preview, page }) => {
+		await openLink(preview, { servers: { [PIPER]: { auth: [] } } });
+		const form = page.getByRole('form', { name: 'Sign in' });
+		await form.getByRole('button', { name: 'Continue', exact: true }).click();
+		await expect(form).toContainText('This address answered, but not as an Apron server.');
+		await expect(form.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+		await form.getByRole('button', { name: 'Cancel', exact: true }).click();
+		await expect(form).toHaveCount(0);
+		await expect(page.getByTestId('connection-status')).toHaveText('Connected');
 	});
 });
 
@@ -202,7 +292,75 @@ test.describe('on a phone', () => {
 		const backBox = (await back.boundingBox())!;
 		expect(name.x + name.width).toBeLessThanOrEqual(backBox.x);
 		await expect(head(preview).locator('.ap-shell-sidehead-host')).toHaveText('server.apron.chat');
-		await preview.openConnect();
+		await preview.openConnect({ signIn: true });
 		await expect(page.getByTestId('connect-server')).toContainText(LONG);
+	});
+
+	test('a server that doesn’t answer says which one it is connecting to, and Change server stops it for the connect screen', async ({ page }) => {
+		const base = process.env.E2E_URL!;
+		const OFFSITE = /^https?:\/\/(?!127\.0\.0\.1[:/]|localhost[:/])/;
+		await page.route(OFFSITE, (route) => route.abort());
+		// Gone: the socket never hears back, so the page is still connecting.
+		await page.routeWebSocket(/.*/, () => new Promise<void>(() => undefined));
+		await page.addInitScript(() => localStorage.setItem('apron.serverUrl', 'wss://chat.gone.example/'));
+		await page.goto(`${base}/`);
+		await expect(page.locator('.ap-tlstatus-pill')).toHaveText('Connecting to chat.gone.example…');
+		await page.getByRole('button', { name: 'Change server', exact: true }).click();
+		const form = page.getByRole('form', { name: 'Sign in' });
+		await expect(form).toBeVisible();
+		await expect(page.getByTestId('server-url-input')).toHaveValue('wss://chat.gone.example/');
+		// Connecting stopped: there's nothing to cancel back to.
+		await expect(form.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0);
+	});
+
+	test('a server that stays gone says it is still trying to reach it, and Change server stops it there too', async ({ page }) => {
+		const base = process.env.E2E_URL!;
+		await page.clock.install();
+		await page.route(/^https?:\/\/(?!127\.0\.0\.1[:/]|localhost[:/])/, (route) => route.abort());
+		// Gone: every socket is closed as it opens.
+		await page.routeWebSocket(/.*/, (ws) => ws.close());
+		await page.addInitScript(() => localStorage.setItem('apron.serverUrl', 'wss://chat.gone.example/'));
+		await page.goto(`${base}/`);
+		await expect(page.getByTestId('change-server')).toBeVisible();
+		// Past the wait before a reconnect counts as stalled.
+		await page.clock.runFor(11_000);
+		await expect(page.getByTestId('connection-status')).toHaveText('Still trying to reach chat.gone.example…');
+		await page.getByRole('button', { name: 'Change server', exact: true }).click();
+		const form = page.getByRole('form', { name: 'Sign in' });
+		await expect(form).toBeVisible();
+		await expect(form.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0);
+	});
+
+	test('recent servers can be starred, staying at the top, and forgotten', async ({ page }) => {
+		const base = process.env.E2E_URL!;
+		await page.route(/^https?:\/\/(?!127\.0\.0\.1[:/]|localhost[:/])/, (route) => route.abort());
+		await page.routeWebSocket(/.*/, () => new Promise<void>(() => undefined));
+		await page.addInitScript(() => {
+			localStorage.setItem('apron.serverUrl', 'wss://chat.gone.example/');
+			// Only the first visit's list: what the page saves after it stands on a reload.
+			if (!sessionStorage.getItem('seeded')) {
+				sessionStorage.setItem('seeded', '1');
+				localStorage.setItem('apron.recentServers', JSON.stringify([{ url: 'wss://chat.gone.example/', title: 'Old Chat' }, { url: 'wss://work.example/', title: 'Work' }]));
+			}
+		});
+		const openRecent = async () => {
+			await page.goto(`${base}/`);
+			await page.getByRole('button', { name: 'Change server', exact: true }).click();
+			return page.getByRole('group', { name: 'Recent servers' });
+		};
+		let recent = await openRecent();
+		const names = () => recent.locator('.ap-connect-recent-item .ap-room-name');
+		await expect(names()).toHaveText(['Old Chat', 'Work']);
+		const star = recent.getByRole('button', { name: 'Star Work', exact: true });
+		await expect(star).toHaveAttribute('aria-pressed', 'false');
+		await star.click();
+		await expect(names()).toHaveText(['Work', 'Old Chat']);
+		await expect(recent.getByRole('button', { name: 'Star Work', exact: true })).toHaveAttribute('aria-pressed', 'true');
+		await recent.getByRole('button', { name: 'Forget Old Chat', exact: true }).click();
+		await expect(names()).toHaveText(['Work']);
+		// Kept: starred, and the gone server forgotten.
+		recent = await openRecent();
+		await expect(names()).toHaveText(['Work']);
+		await expect(recent.getByRole('button', { name: 'Star Work', exact: true })).toHaveAttribute('aria-pressed', 'true');
 	});
 });

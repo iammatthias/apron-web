@@ -152,8 +152,17 @@ describe('a message row', () => {
 		expect(react).toHaveBeenCalledWith(expect.objectContaining({ id: '1' }), '👍');
 		chip.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
 		expect(reactors).toHaveBeenCalledWith(expect.objectContaining({ id: '1' }), '👍', chip);
-		// No + to add one: reacting starts from the toolbar.
+		// No + to add one without a picker to open (`pick`).
 		expect(dom.queryByRole('button', 'Add a reaction')).toBeNull();
+	});
+
+	it('opens your picker beside the + after the chips, which says so while it is open', () => {
+		const pick = vi.fn();
+		render({ reactions: [{ emoji: '👍', count: 1, mine: false }], caps: { ...NONE, react: true } }, { pick, picking: () => true });
+		const add = dom.button('Add a reaction');
+		expect(add.getAttribute('aria-expanded')).toBe('true');
+		add.click();
+		expect(pick).toHaveBeenCalledWith(expect.objectContaining({ id: '1' }), add);
 	});
 
 	it('shows chips that do not toggle where you may not react', () => {
@@ -225,14 +234,14 @@ describe('a message row’s toolbar', () => {
 		const row = render({ caps: ALL, reply: { id: '7', name: 'Bob' } }, on);
 		engage(row);
 		const toolbar = dom.byRole('toolbar', 'Message actions');
-		expect([...toolbar.querySelectorAll('button')].map(dom.nameOf)).toEqual(['Reply to message', 'React', 'Start thread', 'Edit message', 'More actions']);
+		expect([...toolbar.querySelectorAll('button')].map(dom.nameOf)).toEqual(['React', 'Reply to message', 'Start thread', 'Edit message', 'More actions']);
 		dom.button('Reply to message').click();
 		dom.button('Start thread').click();
 		dom.button('Edit message').click();
 		expect([on.reply, on.startThread, on.edit].map((handler) => handler.mock.calls.length)).toEqual([1, 1, 1]);
 		dom.button('More actions').click();
 		flushSync();
-		expect([...toolbar.querySelectorAll('button')].map(dom.nameOf)).toEqual(['Reply to message', 'React', 'Start thread', 'Edit message', 'Remove reply reference', 'Select message', 'Copy link to message', 'Delete message']);
+		expect([...toolbar.querySelectorAll('button')].map(dom.nameOf)).toEqual(['React', 'Reply to message', 'Start thread', 'Edit message', 'Remove reply reference', 'Select message', 'Copy link to message', 'Delete message']);
 		// Using one puts the rest away again.
 		dom.button('Delete message').click();
 		flushSync();
@@ -246,6 +255,51 @@ describe('a message row’s toolbar', () => {
 		flushSync();
 		dom.button('Remove reply reference').click();
 		expect([on.beginSelect, on.removeReply].map((handler) => handler.mock.calls.length)).toEqual([1, 1]);
+	});
+
+	it('offers the quick reactions first, set apart, each toggling yours and pressed where it is already yours', () => {
+		const react = vi.fn();
+		const row = render({ caps: { ...NONE, react: true, reply: true }, reactions: [{ emoji: '❤', count: 1, mine: true }] }, { react, quick: () => ['👍', '❤️', '😂'] });
+		engage(row);
+		const toolbar = dom.byRole('toolbar', 'Message actions');
+		expect([...toolbar.querySelectorAll('button')].map(dom.nameOf)).toEqual(['React with 👍', 'React with ❤️', 'React with 😂', 'React', 'Reply to message']);
+		expect(dom.byRole('group', 'Quick reactions').querySelectorAll('[aria-pressed="true"]').length).toBe(1);
+		expect(dom.button('React with ❤️').getAttribute('aria-pressed')).toBe('true');
+		dom.button('React with 😂').click();
+		expect(react).toHaveBeenCalledWith(expect.objectContaining({ id: '1' }), '😂');
+	});
+
+	it('reads the quick reactions as the pointer arrives, so a press doesn’t reorder them under it', () => {
+		let recent = ['👍', '❤️', '😂'];
+		const row = render({ caps: { ...NONE, react: true } }, { react: (_, emoji) => (recent = [emoji, ...recent.filter((it) => it !== emoji)]), quick: () => recent });
+		engage(row);
+		const names = () => [...dom.byRole('group', 'Quick reactions').querySelectorAll('button')].map(dom.nameOf);
+		dom.button('React with 😂').click();
+		flushSync();
+		expect(names()).toEqual(['React with 👍', 'React with ❤️', 'React with 😂']);
+		engage(row);
+		expect(names()).toEqual(['React with 😂', 'React with 👍', 'React with ❤️']);
+	});
+
+	it('offers no quick reactions where you may not react, or on a tombstone', () => {
+		let row = render({ caps: { ...NONE, reply: true } }, { quick: () => ['👍'] });
+		engage(row);
+		expect(dom.queryByRole('group', 'Quick reactions')).toBeNull();
+		dom.unmount();
+		row = render({ deleted: true, caps: { ...NONE, react: true, removeReply: true } }, { quick: () => ['👍'] });
+		engage(row);
+		expect(dom.queryByRole('group', 'Quick reactions')).toBeNull();
+	});
+
+	it('shows each action as its icon, named in its tooltip with its key, its words there for the keyboard', () => {
+		const row = render({ caps: { ...NONE, reply: true, edit: true, startThread: true } });
+		engage(row);
+		const reply = dom.button('Reply to message');
+		expect(reply.querySelector('svg')).not.toBeNull();
+		expect([reply.title, reply.getAttribute('aria-keyshortcuts'), reply.dataset.key, reply.querySelector('.ap-actions-label')?.textContent]).toEqual(['Reply (R)', 'r', 'R', 'Reply']);
+		expect(dom.button('Edit message').title).toBe('Edit (E)');
+		// Its words say Thread, a verb as Reply and Edit are; what a screen reader hears (Start thread) still holds them.
+		expect([dom.button('Start thread').title, dom.button('Start thread').querySelector('.ap-actions-label')?.textContent, dom.button('Start thread').dataset.key]).toEqual(['Thread', 'Thread', undefined]);
 	});
 
 	it('offers Remove reply under ⋯ only on a reply', () => {
@@ -280,6 +334,9 @@ describe('a message row’s toolbar', () => {
 		flushSync();
 		dom.button('Copy link to message').click();
 		await vi.waitFor(() => expect(dom.queryByRole('button', 'Link copied')).not.toBeNull());
+		// In the menu ⋯ opened, its row's icon turns to a check (ActionIcons') and its words to Copied.
+		expect(dom.byRole('toolbar', 'Message actions').getAttribute('aria-orientation')).toBe('vertical');
+		expect(dom.button('Link copied').querySelector('path[d="M20 6 9 17l-5-5"]')).not.toBeNull();
 		expect(dom.button('Link copied').textContent).toBe('Copied');
 		vi.advanceTimersByTime(1200);
 		flushSync();
@@ -329,6 +386,8 @@ describe('a message row’s toolbar', () => {
 		expect(pick).toHaveBeenCalledWith(expect.objectContaining({ id: '1' }), react);
 		expect(react.getAttribute('aria-expanded')).toBe('true');
 		dom.unmount();
+		// The toolbar is the dock's, its own root: it empties as that root next settles.
+		flushSync();
 		expect(release).toHaveBeenCalledOnce();
 	});
 });
@@ -417,7 +476,18 @@ describe('select gestures', () => {
 	const held = (row: Element) => row.classList.contains('ap-msg-held');
 	const buttons = () => [...dom.byRole('toolbar', 'Message actions').querySelectorAll('button')].map(dom.nameOf);
 
-	it('opens a larger menu from a long touch press, Reply and React up front and the rest behind ⋯ as rows, Select on anyone’s', () => {
+	it('moves touch’s menu to the row a new long press is on, though the other’s was open', () => {
+		vi.useFakeTimers();
+		render({ id: 'a', caps: { ...NONE, reply: true } });
+		render({ id: 'b', caps: { ...NONE, reply: true, edit: true } });
+		const [a, b] = [...document.querySelectorAll('article')];
+		hold(a.querySelector('.ap-msg-text')!);
+		expect(a.querySelector('[role="toolbar"]')).not.toBeNull();
+		hold(b.querySelector('.ap-msg-text')!);
+		expect([a.querySelector('[role="toolbar"]'), b.querySelector('[role="toolbar"]') !== null, held(b)]).toEqual([null, true, true]);
+	});
+
+	it('opens a larger menu from a long touch press, React and Reply up front and the rest behind ⋯ as rows, Select on anyone’s', () => {
 		vi.useFakeTimers();
 		const copyText = vi.fn(async () => true);
 		// Not yours: Select is still there.
@@ -426,7 +496,10 @@ describe('select gestures', () => {
 		hold(text);
 		expect(held(row)).toBe(true);
 		expect(dom.byRole('toolbar', 'Message actions').classList.contains('ap-actions-touch')).toBe(true);
-		expect(buttons()).toEqual(['Reply to message', 'React', 'More actions']);
+		expect(buttons()).toEqual(['React', 'Reply to message', 'More actions']);
+		// Icons up front, their words there only for the keyboard, which touch's bar doesn't box; as rows, each icon beside its words.
+		expect(dom.button('Reply to message').classList.contains('ap-actions-icon')).toBe(true);
+		expect(dom.button('Reply to message').dataset.key).toBeUndefined();
 		// The click that ends the press does nothing else.
 		click(text);
 		flushSync();
@@ -434,7 +507,10 @@ describe('select gestures', () => {
 		dom.button('More actions').click();
 		flushSync();
 		expect(dom.byRole('toolbar', 'Message actions').getAttribute('aria-orientation')).toBe('vertical');
-		expect(buttons()).toEqual(['Reply to message', 'React', 'Start thread', 'Select message', 'Copy text', 'Copy link to message']);
+		expect(buttons()).toEqual(['React', 'Reply to message', 'Start thread', 'Select message', 'Copy text', 'Copy link to message']);
+		expect(dom.button('Reply to message').textContent).toBe('Reply');
+		expect(dom.button('Reply to message').classList.contains('ap-actions-row')).toBe(true);
+		expect(dom.button('Reply to message').querySelector('svg')).not.toBeNull();
 		dom.button('Copy text').click();
 		expect(copyText).toHaveBeenCalledOnce();
 	});
@@ -604,5 +680,146 @@ describe('test ids', () => {
 		expect(ids('chip')).toEqual([dom.button('👍 1. Add yours')]);
 		expect(ids('select')).toEqual([dom.button('Select message')]);
 		expect(ids('writing')).toEqual([row.querySelector('.ap-msg-writing')]);
+	});
+});
+
+describe('task list checkboxes', () => {
+	// As `renderMarkdown` writes it.
+	const html = '<ul class="ap-task-list"><li class="ap-task-item"><input type="checkbox" class="ap-task" data-task-line="0" disabled="">Foo</li></ul>';
+	const box = () => document.querySelector<HTMLInputElement>('input.ap-task')!;
+
+	it('stay disabled where you may not tick them, even on one you may edit', () => {
+		render({ body: { html, markdown: true, tasks: true }, caps: ALL }, { toggleTask: () => true });
+		expect(box().disabled).toBe(true);
+		dom.cleanup();
+	});
+
+	it('follow select mode without decorating the code blocks again', () => {
+		const code = vi.fn();
+		const body = { html: `<pre><code>a</code></pre>${html}`, markdown: true, code: true, tasks: true };
+		const props = $state({ view: view({ body, caps: { ...NONE, check: true } }), on: { code, toggleTask: () => true } });
+		dom.render(Message, props);
+		expect(box().disabled).toBe(false);
+		props.view = view({ body, caps: { ...NONE, check: true }, selecting: true });
+		flushSync();
+		expect(box().disabled).toBe(true);
+		expect(code).toHaveBeenCalledOnce();
+		dom.cleanup();
+	});
+
+	it('save a check where you may tick them, and go back when it fails', async () => {
+		let result = true;
+		const toggled: Array<[number, boolean]> = [];
+		render({ body: { html, markdown: true, tasks: true }, caps: { ...NONE, check: true } }, { toggleTask: (_view, line, checked) => (toggled.push([line, checked]), Promise.resolve(result)) });
+		expect(box().disabled).toBe(false);
+		box().click();
+		await tick();
+		expect(toggled).toEqual([[0, true]]);
+		expect(box().checked).toBe(true);
+		expect(box().closest('.ap-task-item')!.classList.contains('ap-task-done')).toBe(true);
+		result = false;
+		box().click();
+		await Promise.resolve();
+		await tick();
+		expect(toggled).toEqual([[0, true], [0, false]]);
+		expect(box().checked).toBe(true);
+		expect(box().closest('.ap-task-item')!.classList.contains('ap-task-done')).toBe(true);
+		dom.cleanup();
+	});
+});
+
+describe('the toolbar the rows share (the dock)', () => {
+	/** Two rows, each with its own view and handlers. */
+	function rows(first: Partial<MessageView>, second: Partial<MessageView>, on: MessageHandlers = {}) {
+		render({ id: 'a', ...first }, on);
+		render({ id: 'b', ...second }, on);
+		const [a, b] = [...document.querySelectorAll('article')];
+		return { a, b };
+	}
+	const toolbars = () => [...document.querySelectorAll('[role="toolbar"][aria-label="Message actions"]')];
+	const names = (row: Element) => [...row.querySelectorAll('[role="toolbar"] button')].map(dom.nameOf);
+
+	it('moves one toolbar into whichever row is reached, drawing that row’s actions', () => {
+		const reply = vi.fn();
+		const { a, b } = rows({ caps: { ...NONE, reply: true, edit: true } }, { caps: { ...NONE, reply: true } }, { reply });
+		engage(a);
+		const toolbar = toolbars()[0];
+		expect([toolbars().length, a.contains(toolbar), names(a)]).toEqual([1, true, ['Reply to message', 'Edit message', 'More actions']]);
+		engage(b);
+		// The same toolbar, now in the other row, with that row's actions.
+		expect([toolbars().length, toolbars()[0], b.contains(toolbar), a.contains(toolbar), names(b)]).toEqual([1, toolbar, true, false, ['Reply to message']]);
+		dom.button('Reply to message').click();
+		expect(reply).toHaveBeenCalledWith(expect.objectContaining({ id: 'b' }));
+		// Back again: into the slot that row kept, its markup unchanged by the moves.
+		const slot = a.querySelector('.ap-msg-dock');
+		engage(a);
+		expect([a.querySelector('.ap-msg-dock'), a.contains(toolbar), b.contains(toolbar), names(a)]).toEqual([slot, true, false, ['Reply to message', 'Edit message', 'More actions']]);
+	});
+
+	it('stays with the row whose menu is open, the row reached meanwhile showing none, and moves on once it shuts', () => {
+		const { a, b } = rows({ caps: { ...NONE, link: true, reply: true } }, { caps: { ...NONE, link: true, reply: true } });
+		engage(a);
+		dom.button('More actions').click();
+		flushSync();
+		expect(names(a)).toContain('Copy link to message');
+		engage(b);
+		expect([toolbars().length, names(b)]).toEqual([1, []]);
+		// Escape shuts it; the next row reached takes the toolbar, its own shut.
+		toolbars()[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+		flushSync();
+		engage(b);
+		expect(names(b)).toEqual(['Reply to message', 'More actions']);
+	});
+
+	it('lets its menu go, and the toolbar with it, on an Escape anywhere or focus leaving it', async () => {
+		const { a, b } = rows({ caps: { ...NONE, link: true, reply: true } }, { caps: { ...NONE, link: true, reply: true } });
+		// Escape with the keyboard on the row, not in the menu.
+		engage(a);
+		dom.button('More actions').click();
+		flushSync();
+		a.focus();
+		a.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+		flushSync();
+		engage(b);
+		expect(names(b)).toEqual(['Reply to message', 'More actions']);
+		// Focus leaving the open menu, as Tab on to the composer would.
+		dom.button('More actions').click();
+		flushSync();
+		dom.button('Copy link to message').focus();
+		const elsewhere = document.body.appendChild(document.createElement('button'));
+		elsewhere.focus();
+		await Promise.resolve();
+		flushSync();
+		engage(a);
+		expect(names(a)).toEqual(['Reply to message', 'More actions']);
+	});
+
+	it('leaves the next row’s menu open when the last row’s Copied runs out', async () => {
+		vi.useFakeTimers();
+		const copyLink = vi.fn(async () => true);
+		const { a, b } = rows({ caps: { ...NONE, link: true, reply: true } }, { caps: { ...NONE, link: true, reply: true } }, { copyLink });
+		engage(a);
+		dom.button('More actions').click();
+		flushSync();
+		dom.button('Copy link to message').click();
+		await vi.waitFor(() => expect(dom.queryByRole('button', 'Link copied')).not.toBeNull());
+		// A press elsewhere puts a's menu away; b's opens before a's Copied runs out.
+		document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+		flushSync();
+		engage(b);
+		dom.button('More actions').click();
+		flushSync();
+		vi.advanceTimersByTime(1200);
+		flushSync();
+		expect(names(b)).toContain('Copy link to message');
+	});
+
+	it('stays with the row whose picker is open, the row reached meanwhile showing none', () => {
+		const { a, b } = rows({ caps: { ...NONE, react: true } }, { caps: { ...NONE, react: true } }, { pick: vi.fn(), picking: (view) => view.id === 'a' });
+		engage(a);
+		const toolbar = toolbars()[0];
+		expect(toolbar.querySelector('[aria-expanded="true"]')).not.toBeNull();
+		engage(b);
+		expect([toolbars().length, a.contains(toolbar), b.querySelector('[role="toolbar"]')]).toEqual([1, true, null]);
 	});
 });

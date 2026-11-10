@@ -8,7 +8,7 @@
 
 	const HINTS: Record<string, string> = {
 		guest: 'No token needed; the server picks a guest identity.',
-		token: 'Paste the token this backend gave you.',
+		token: 'Paste the token this server gave you.',
 		email: 'We email you a code to sign in with; the link in the email signs you in too.',
 		external: 'Signs in on the server’s own sign-in page (such as single sign-on), which then brings you back here.'
 	};
@@ -56,6 +56,10 @@
 		busy?: boolean;
 		recent?: RecentBackend[];
 		onpickrecent?: (r: RecentBackend) => void;
+		/** Star or unstar a recent backend (ConnectPage). */
+		onstarrecent?: (r: RecentBackend, starred: boolean) => void;
+		/** Take a recent backend off the list (ConnectPage). */
+		onforgetrecent?: (r: RecentBackend) => void;
 		/** The server in the field, once it has answered (§3.1), and its rendered `description`. */
 		server?: ConnectServer;
 		description?: Snippet;
@@ -67,7 +71,7 @@
 	let {
 		status = 'idle', url = $bindable(''), name = $bindable(''), schemes = ['guest', 'token', 'webauthn'], scheme = $bindable(), token = $bindable(''),
 		welcome, email = $bindable(''), code = $bindable(''), codeSent = false, onrestart, onconnect, passkey = {}, passkeyMode = $bindable('login'), onpasskey, notice, error, oncancel,
-		busy: waiting, recent, onpickrecent, server, description, page = false, class: className
+		busy: waiting, recent, onpickrecent, onstarrecent, onforgetrecent, server, description, page = false, class: className
 	}: Props = $props();
 	const busy = $derived(waiting ?? (status === 'connecting' || status === 'authing'));
 	const current = $derived(scheme || schemes[0]);
@@ -90,7 +94,7 @@
 	}
 </script>
 
-<ConnectPage class={className} {recent} {onpickrecent} {busy} {page}>
+<ConnectPage class={className} {recent} {onpickrecent} {onstarrecent} {onforgetrecent} {busy} {page}>
 	<SignInForm
 		{schemes} scheme={current} onscheme={(k) => (scheme = k)} passkeyChoice={current === 'webauthn' && signIn && signUp} {passkeyMode} onpasskeymode={(k) => (passkeyMode = k)}
 		bind:token bind:email bind:code bind:name {askName} sent={codeSent && current === 'email' ? { scheme: 'email', email } : undefined} {onrestart}

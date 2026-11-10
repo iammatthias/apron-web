@@ -110,12 +110,21 @@ export interface MessageAction {
 	label: string;
 	/** A short text glyph; omitted, the label shows. */
 	glyph?: string;
+	/**
+	 * An icon (ActionIcons'): the toolbar shows it alone, its name in the tooltip, and touch's menu shows it
+	 * beside the glyph or label.
+	 */
+	icon?: Snippet;
+	/** The key that does it while the message is focused (`R`): in the tooltip, and badged on it for the keyboard. */
+	key?: string;
 	/** The tooltip; none when omitted. */
 	title?: string;
 	/** A press. One that returns a promise resolving true, on an action with `done`, says so for a moment. */
 	onclick?: (event: MouseEvent) => unknown;
 	/** What the button says for a moment after its press worked, before the ⋯ actions close (Copy link: Copied). */
 	done?: { label: string; glyph?: string };
+	/** A toggle (`aria-pressed`), such as a quick reaction that is already yours. */
+	pressed?: boolean;
 	/** It opens a dialog beside it (`aria-haspopup`); `expanded` says whether that is open. */
 	popup?: boolean;
 	expanded?: boolean;
@@ -203,6 +212,29 @@ export interface ComposerField {
 	command: boolean;
 }
 
+/** What a MarkdownEditor gives your own `field`: its class, for the editor's look, and its name, placeholder and state. */
+export interface MarkdownEditorField {
+	/** The field's class, `ap-mdedit-field`. */
+	class: string;
+	/** The field's accessible name, the editor's `label`. */
+	label: string;
+	placeholder: string;
+	disabled: boolean;
+}
+
+/** What a RoomForm's own description field (`field`) is drawn with. */
+export interface RoomFormField {
+	/** The description's accessible name: "Room description" or "Thread description". */
+	label: string;
+	placeholder: string;
+	/** Saving: it takes no typing until it's done. */
+	disabled: boolean;
+	/** How many lines tall it starts. */
+	rows: number;
+	/** Submits the form, as Ctrl+Enter (⌘+Enter) in the field may. */
+	submit: () => void;
+}
+
 /** What the MessageEditor gives your own `field`: put both on it, for the editor's look and the field's name. */
 export interface MessageEditorField {
 	/** The editor's field class, `ap-msgedit-field`. */
@@ -273,6 +305,16 @@ export interface MessageCaps {
 	react: boolean;
 	/** Copy link, under ⋯: a URL that opens this message where it is. */
 	link: boolean;
+	/**
+	 * `edit` changes only the text: someone else's message that shares it with you (`ext:editors`). No delete,
+	 * reply reference removal, or embed changes.
+	 */
+	textOnly?: boolean;
+	/**
+	 * Tick its task list checkboxes: on your own message, or one that shares its text with you (`ext:editors`).
+	 * Saving it is an edit, which the server may refuse; the box goes back if it does.
+	 */
+	check?: boolean;
 }
 
 /** Who sent a message, as its row shows them (§3.3): the kept user object, else the one it was posted under. */
@@ -381,8 +423,10 @@ export interface MessageView {
 	timestamp?: number;
 	/** The short time, pre-formatted; without a timestamp it's all that shows. */
 	time?: string;
-	/** ALREADY SANITIZED markup of the text; absent when a message has none. `code` when it holds code blocks to decorate. */
-	body?: { html: string; markdown?: boolean; code?: boolean };
+	/** ALREADY SANITIZED markup of the text; absent when a message has none. `code` when it holds code blocks to decorate, `tasks` task list checkboxes. */
+	body?: { html: string; markdown?: boolean; code?: boolean; tasks?: boolean };
+	/** Who saved its text, by name, when someone other than its sender did (`ext:editors`): shown so their words don't read as the sender's. */
+	editedBy?: string;
 	reply?: MessageReply;
 	/** The messages, rooms and threads its links point to, as cards under its text; none on a tombstone. */
 	linkCards?: MessageLinkCard[];
@@ -422,6 +466,11 @@ export interface MessageHandlers {
 	reply?: (view: MessageView) => void;
 	/** Toggle your reaction with this emoji (a chip, or a pick). */
 	react?: (view: MessageView, emoji: string) => void;
+	/**
+	 * The emoji the toolbar offers to react with in one press, ahead of React, such as the ones you used last. Read as
+	 * the pointer or focus reaches the row, so they keep their places while it is there.
+	 */
+	quick?: () => readonly string[];
 	/** The React action: open your picker beside its button. */
 	pick?: (view: MessageView, anchor: HTMLElement) => void;
 	/** Whether that picker is open for this message, for the button's `aria-expanded`. */
@@ -451,6 +500,11 @@ export interface MessageHandlers {
 	jump?: (messageId: string) => void;
 	/** Decorate the code blocks in a body (highlighting; `copy` adds Copy buttons, on a notice). Runs again when the body changes. */
 	code?: (body: HTMLElement, copy: boolean) => void | (() => void);
+	/**
+	 * A task list item's checkbox was checked or unchecked, on a message whose `caps.check` allows it: save the text with it so. `line` is its
+	 * `data-task-line`. Resolves whether it was saved (false puts the box back); offering it enables the boxes.
+	 */
+	toggleTask?: (view: MessageView, line: number, checked: boolean) => boolean | Promise<boolean>;
 }
 
 /** The `data-testid`s a Message puts on its parts, for whoever queries them. */
@@ -463,6 +517,8 @@ export interface MessageTestids {
 	reactions?: string;
 	chip?: string;
 	select?: string;
+	/** Its "edited by" line (`ext:editors`). */
+	editedBy?: string;
 	/** The Writing… of a message whose text is still arriving. */
 	writing?: string;
 	/** The Waiting to stream… of a message whose text waits for its writer. */
@@ -528,6 +584,11 @@ export interface PickPerson extends Face {
 	tag?: string;
 	/** You already have a conversation with just them: picking them alone opens it ("Already talking · Open"). */
 	existing?: boolean;
+	/**
+	 * A set of people rather than one, such as everyone with a role (`@mod`): the `user_id`s it picks together, and its
+	 * row has a check once they're all picked. Its own `user_id` names the set, such as the role, and is no one's.
+	 */
+	group?: string[];
 }
 
 /** A message a SearchPanel found: where and when, by whom, and a line of it with the words searched for marked. */
@@ -616,6 +677,8 @@ export interface RecentBackend {
 	label?: string;
 	/** Its `avatar` (§3.1), loaded as a user's is (§4.8.6); initials without one. */
 	avatar?: MediaSrc;
+	/** Starred: kept at the top of the list until unstarred. */
+	starred?: boolean;
 }
 
 /** The server in the connect screen's Server field, once it has answered: how it shows itself (§3.1), beside its address. */

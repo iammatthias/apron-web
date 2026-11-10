@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import type { MediaCheck } from './sanitize';
-import { markdownText, renderBio, renderMarkdown, renderPlain, type EmojiResolver, type LinkResolver, type MentionResolver, mentionSegments } from './markdown';
+import { toggleTask } from './task-list';
+import { markdownRoles, markdownText, renderBio, renderMarkdown, renderPlain, type EmojiResolver, type LinkResolver, type MentionResolver, mentionSegments, hasTaskItems } from './markdown';
 
 const resolve: MentionResolver = (id) => {
 	if (id === 'alice') return { kind: 'user', id, name: 'Alice Chen' };
@@ -99,6 +100,14 @@ describe('mentions (Appendix A.3)', () => {
 		// A plain body is escaped around its mentions, and without a resolver there are none.
 		expect(renderPlain('<b>@alice</b>', resolve)).toBe('&lt;b&gt;<button type="button" class="ap-mention" data-user-id="alice" title="@alice">@Alice Chen</button>&lt;/b&gt;');
 		expect(renderMarkdown('@alice is here')).toBe('<p>@alice is here</p>\n');
+	});
+});
+
+describe('the roles a message mentions', () => {
+	it('finds them where they render: outside code and links, once each, in order', () => {
+		expect(markdownRoles('@&mod and @&admin, again @&mod, not a@&ops nor @ada')).toEqual(['mod', 'admin']);
+		expect(markdownRoles('Type `@&admin` to reach them, or [@&ops](https://example.com)\n\n```\n@&mod\n```\n\n**@&oncall**')).toEqual(['oncall']);
+		expect(markdownRoles('no roles here')).toEqual([]);
 	});
 });
 
@@ -462,5 +471,65 @@ describe('role mentions (@&role)', () => {
 describe('role mentions in Markdown', () => {
 	it('chips @&role in rendered Markdown, but not inside code', () => {
 		expect(renderMarkdown('**@&mods** `@&mods`', resolve)).toContain('<strong><span class="ap-mention ap-mention-role" title="Everyone with the role mods">@mods</span></strong> <code>@&amp;mods</code>');
+	});
+});
+
+describe('task lists', () => {
+	it('draws `[ ]` and `[x]` items as disabled checkboxes, each with its source line', () => {
+		const html = renderMarkdown('Todo:\n\n- [ ] Foo\n- [x] Bar\n- [X] Baz');
+		expect(html).toContain('<li class="ap-task-item"><input type="checkbox" class="ap-task" data-task-line="2" disabled="">Foo</li>');
+		expect(html).toContain('<li class="ap-task-item ap-task-done"><input type="checkbox" class="ap-task" data-task-line="3" checked="" disabled="">Bar</li>');
+		expect(html).toContain('data-task-line="4" checked=""');
+	});
+
+	it('marks the lists that hold tasks, nested ones too, and no other', () => {
+		const html = renderMarkdown('- [ ] a\n  - [x] b\n  - c\n\n1. plain');
+		expect(html.match(/<ul class="ap-task-list">/g)).toHaveLength(2);
+		expect(html).toContain('<ol>');
+	});
+
+	it('counts lines in nested lists and quotes, and keeps the text after the marker', () => {
+		const html = renderMarkdown('> - a\n>   - [ ] **deep**');
+		expect(html).toContain('data-task-line="1" disabled=""><strong>deep</strong>');
+	});
+
+	it('leaves anything else as text', () => {
+		for (const source of ['- [ ]', '- [y] no', '- [x]no', '[ ] not a list', '- `[ ]` code', '- \\[ ] escaped']) {
+			expect(renderMarkdown(source), source).not.toContain('<input');
+		}
+	});
+
+	it('keeps an input out of a raw HTML body', () => {
+		expect(renderMarkdown('<input type="text"> - [ ] x')).not.toContain('<input');
+	});
+
+	it('names the line `toggleTask` rewrites', () => {
+		const source = 'a\n\n- b\n  - [ ] c\n\n> - [x] d';
+		const lines = [...renderMarkdown(source).matchAll(/data-task-line="(\d+)"/g)].map((match) => Number(match[1]));
+		expect(lines).toEqual([3, 5]);
+		expect(toggleTask(source, 3, true)).toBe('a\n\n- b\n  - [x] c\n\n> - [x] d');
+		expect(toggleTask(source, 5, false)).toBe('a\n\n- b\n  - [ ] c\n\n> - [ ] d');
+	});
+
+	it('leaves checkboxes out of plain text', () => {
+		expect(markdownText('- [ ] Foo\n- [x] Bar')).toBe('Foo\nBar');
+	});
+});
+
+describe('hasTaskItems', () => {
+	it('finds a task list item as it renders: in a list item, with something after its marker', () => {
+		expect(hasTaskItems('Lunch:\n\n- [ ] soup')).toBe(true);
+		expect(hasTaskItems('> 1. [x] done')).toBe(true);
+		expect(hasTaskItems('- \u202A[ ] milk')).toBe(true);
+	});
+
+	it('finds none where no checkbox renders: a bare marker, code, a quote in an item, or outside a list', () => {
+		expect(hasTaskItems('* [X]')).toBe(false);
+		expect(hasTaskItems('- [ ]   ')).toBe(false);
+		expect(hasTaskItems('```\n- [ ] step\n```')).toBe(false);
+		expect(hasTaskItems('    - [ ] code')).toBe(false);
+		expect(hasTaskItems('- > [ ] x')).toBe(false);
+		expect(hasTaskItems('[ ] not in a list')).toBe(false);
+		expect(hasTaskItems('- [ ]x')).toBe(false);
 	});
 });

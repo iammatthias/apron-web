@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MessageRecord } from '$lib/protocol/types';
-import { UnreadTracker, countElsewhere, sameCounts } from './unread.svelte';
+import { UnreadTracker, countElsewhere, mutedMentions, sameCounts } from './unread.svelte';
 import { tabTitle } from './attention';
 import { messageRecord, roomSnapshot as room } from '$lib/test/builders';
 
@@ -24,6 +24,25 @@ describe('unread tracking', () => {
 		expect(tracker.total).toBe(1);
 	});
 
+	it('leaves muted rooms, and threads of them, out of the count that alerts, while each keeps its own', () => {
+		const tracker = new UnreadTracker();
+		const rooms = (muted: boolean, messages: MessageRecord[][] = [[], [], []]) => [
+			room('general', messages[0], { latestLogId: '10' }),
+			room('random', messages[1], { latestLogId: '10', ...(muted ? { mutedUntil: true as const } : {}) }),
+			room('t1', messages[2], { latestLogId: '10', parentRoomId: 'random' })
+		];
+		tracker.observe(rooms(false), me, undefined, false);
+		const arrived = [[message(20, 'general')], [message(30, 'random'), message(31, 'random')], [message(40, 't1')]];
+		tracker.observe(rooms(true, arrived), me, undefined, false);
+		expect(tracker.byRoom).toEqual({ general: 1, random: 2, t1: 1 });
+		expect(tracker.total).toBe(4);
+		expect(tracker.alerting).toBe(1);
+		expect(tracker.muted).toEqual({ random: 2, t1: 1 });
+		// Unmuted, the room alerts again.
+		tracker.observe(rooms(false, arrived), me, undefined, false);
+		expect(tracker.alerting).toBe(4);
+	});
+
 	it('starts over on another server, where a room of the same name is another room', () => {
 		const tracker = new UnreadTracker();
 		tracker.observe([room('random', [message(20, 'random')], { latestLogId: '20' })], me, 'general', true);
@@ -31,6 +50,7 @@ describe('unread tracking', () => {
 		expect(tracker.byRoom).toEqual({ random: 1 });
 		tracker.reset();
 		expect(tracker.total).toBe(0);
+		expect(tracker.alerting).toBe(0);
 		// The other server's `random` loads its history, after this page's old watermark: none of it arrived.
 		tracker.observe([room('random', [message(30, 'random'), message(31, 'random')], { latestLogId: '31' })], me, 'general', true);
 		expect(tracker.total).toBe(0);
@@ -128,6 +148,13 @@ describe('unread tracking', () => {
 		expect(tracker.byRoom).toEqual({});
 	});
 
+});
+
+describe('mutedMentions', () => {
+	it('counts the unread mentions in muted rooms, never more than a room has unread', () => {
+		expect(mutedMentions({ random: 2, t1: 1 }, { random: 1, t1: 3, general: 5 })).toBe(2);
+		expect(mutedMentions({}, { general: 5 })).toBe(0);
+	});
 });
 
 describe('countElsewhere', () => {

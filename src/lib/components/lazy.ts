@@ -17,6 +17,8 @@ export const profileEditor = part((m) => m.ProfileEditor);
 export const addMembersDialog = part((m) => m.AddMembersDialog);
 export const autocompletePicker = part((m) => m.AutocompletePicker);
 export const installNudge = part((m) => m.InstallPrompt);
+export const mentionAddNudge = part((m) => m.MentionAddPrompt);
+export const editorsNudge = part((m) => m.EditorsPrompt);
 export const selectionBar = part((m) => m.SelectionBar);
 /**
  * Hosts that stay unmounted until their state first asks: render as `{#if host.once(Boolean(state.current))}`. The
@@ -25,6 +27,9 @@ export const selectionBar = part((m) => m.SelectionBar);
 export const profileCardHost = part((m) => m.ProfileCard);
 export const reactorsPopover = part((m) => m.ReactorsPopover);
 export const serverPaneHost = part((m) => m.ServerPane);
+/** The composer's full panel: its formatting buttons and its Preview. */
+export const formatToolbar = part((m) => m.FormatToolbar);
+export const draftPreview = part((m) => m.DraftPreview);
 /** Not a component: `archiveExport.load()` gives `exportArchive`. */
 export const archiveExport = part((m) => m.exportArchive);
 /** Not a component: `dragRooms`, for dragging rooms; `roomDrag.whenLoaded()` waits for it without fetching it (Sidebar's `reorderable`). */

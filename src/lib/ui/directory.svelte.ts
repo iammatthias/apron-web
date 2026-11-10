@@ -3,10 +3,10 @@ import { bioOf, serverMedia, userIn } from '$lib/protocol/client-views';
 import { safeLink, serverOrigin } from '$lib/protocol/embeds';
 import { mediaGate as gateFor, type MediaGate, type MediaSrc } from './media-gate';
 import { shownPerson, withoutBidiOverrides } from '$lib/protocol/plain-text';
-import type { EmojiResolver, LinkResolver, MentionResolver, MentionTarget, RoomMentionResolver } from '$lib/protocol/markdown';
-import type { Identity } from '$lib/protocol/types';
+import { renderMarkdown, type EmojiResolver, type LinkResolver, type MentionResolver, type MentionTarget, type RoomMentionResolver } from '$lib/protocol/markdown';
+import type { Identity, ServerParams } from '$lib/protocol/types';
 import { readPlaceLink, writeApronLink } from './apron-link';
-import { backendHost } from './connection';
+import { serverLabel } from './connection';
 import { customEmoji } from './custom-emoji.svelte';
 import { mediaSettings } from './media-settings.svelte';
 import type { KeyImage } from './reactions';
@@ -96,14 +96,18 @@ class Directory {
 	 * rebuilds the view. The client emits fresh records on every frame, so
 	 * unchanged ones are kept: every message body renders from them, and a
 	 * typing notice or an upload's progress should not render them all again.
+	 * `frame` is the server frame media loads by (`ext.media`): the session's
+	 * (`SessionView.server`), the held view's while it stands in, so a kept
+	 * view's avatars draw before the server answers, and through a reconnect.
+	 * Without one, the snapshot's own.
 	 */
-	apply(snapshot: ClientSnapshot, origin: string | undefined, server?: string): void {
+	apply(snapshot: ClientSnapshot, origin: string | undefined, server?: string, frame: ServerParams | undefined = snapshot.server): void {
 		this.origin = origin;
 		this.server = server;
-		const { origins } = serverMedia(snapshot.server);
+		const { origins } = serverMedia(frame);
 		if (origins.join(' ') !== this.serverMedia.join(' ')) this.serverMedia = origins;
 		// Its custom emoji (`ext:emoji`), kept through a reconnect until the next server frame says otherwise.
-		if (snapshot.server) customEmoji.apply(snapshot.server, server, (url) => this.mediaGate.src(url) !== undefined);
+		if (frame) customEmoji.apply(frame, server, (url) => this.mediaGate.src(url) !== undefined);
 		if (!snapshot.authenticated) return;
 		this.you = snapshot.you;
 		const current = this.users;
@@ -257,8 +261,9 @@ class Directory {
 	 * what it is, from what is known here (Appendix A.4): "Message in #general",
 	 * a room's name, a thread's name "in #general", a known user as `@name`. A
 	 * room not known here is its `room_id`. One to another server is nothing
-	 * here, and opening it switches servers, so it is no mention: its host
-	 * first, then "Message" or "Room", nothing looked up. Another server's
+	 * here, and opening it opens a new tab, so it is no mention: its server
+	 * (`serverLabel`: host and path, as many servers may share a host) first,
+	 * then "Message" or "Room", nothing looked up. Another server's
 	 * user stays a URL, as does any link not read strictly as a place
 	 * (`readPlaceLink`): one with a token, a key it doesn't know, or a
 	 * malformed part never looks like one. Under the chip is the link in its
@@ -272,9 +277,9 @@ class Directory {
 		const shared = writeApronLink({ server, room: link.room, message: link.message, user: link.user });
 		if (server !== this.server) {
 			if (link.user !== undefined) return undefined;
-			const host = backendHost(server) || server;
+			const label = serverLabel(server) || server;
 			const kind = link.message !== undefined ? 'message' : 'room';
-			return { kind, elsewhere: true, href: shared, label: host, detail: kind === 'message' ? ' · Message' : ' · Room', title: `A ${kind} on ${host}, another server: opening it asks to switch` };
+			return { kind, elsewhere: true, href: shared, label, detail: kind === 'message' ? ' · Message' : ' · Room', title: `A ${kind} on ${label}, another server: opens in a new tab` };
 		}
 		const room = this.resolveRoom(link.room)?.title ?? link.room;
 		// In a tooltip, as a room mention's: an untitled thread's room_id after its "Untitled".
@@ -304,6 +309,14 @@ class Directory {
 		if (this.sharesName(from)) target.shared = true;
 		return target;
 	};
+
+	/**
+	 * CommonMark (a description, a server's welcome, a message), rendered and sanitized as a message body is, with the
+	 * mentions, room links and emoji known here; empty for blank text. `links`: links to rooms and messages as chips,
+	 * as a message draws them; a description draws them plain.
+	 */
+	readonly markdown = (text: string | undefined, links = false): string =>
+		text?.trim() ? renderMarkdown(text, this.resolve, this.resolveRoom, links ? this.resolveLink : undefined, this.resolveEmoji, this.mediaGate) : '';
 }
 
 /** Whether two `pieces` of the directory are the same, so what was rendered from one is current for the other. */

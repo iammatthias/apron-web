@@ -11,6 +11,9 @@ import { canSanitize, NOWHERE, sanitizeHtml, type MediaCheck } from './sanitize'
  * markup (`html: false`, §3.5), and links with unsafe schemes (`javascript:`,
  * `data:` other than images, ...) are not linked.
  */
+/** A task list item's marker at the start of its text: `[ ]`, `[x]` or `[X]`, then a space or the end of the line. */
+const TASK_TEXT = /^\[([ xX])\](?:[ \t]+|$)/;
+
 const md = new MarkdownIt({ html: false, breaks: true, linkify: false, typographer: false });
 
 // Table alignment as a class, so no `style` attribute has to be let through.
@@ -21,6 +24,43 @@ md.core.ruler.push('align_class', (state) => {
 		token.attrs = align ? [['class', `ap-align-${align}`]] : null;
 	}
 });
+/**
+ * GitHub task list items: a list item whose text starts with `[ ]` or `[x]` and a space shows a checkbox in their
+ * place. Each carries the source line its marker is on (`data-task-line`), so checking it can rewrite that marker
+ * (`toggleTask`). It renders disabled: where whoever views it may edit the message, the page enables it.
+ */
+md.core.ruler.after('inline', 'task_lists', (state) => {
+	const tokens = state.tokens;
+	for (let index = 2; index < tokens.length; index += 1) {
+		const inline = tokens[index];
+		const paragraph = tokens[index - 1];
+		const item = tokens[index - 2];
+		if (inline.type !== 'inline' || paragraph.type !== 'paragraph_open' || item.type !== 'list_item_open') continue;
+		const children = inline.children ?? [];
+		const first = children[0];
+		const marker = first?.type === 'text' ? TASK_TEXT.exec(first.content) : null;
+		const line = paragraph.map?.[0];
+		// A marker with nothing after it is text, as on GitHub.
+		if (!marker || line === undefined || (marker[0].length === first.content.length && children.length < 2)) continue;
+		first.content = first.content.slice(marker[0].length);
+		const box = new state.Token('html_inline', '', 0);
+		box.content = `<input type="checkbox" class="ap-task" data-task-line="${line}"${marker[1] === ' ' ? '' : ' checked'} disabled>`;
+		children.unshift(box);
+		item.attrJoin('class', marker[1] === ' ' ? 'ap-task-item' : 'ap-task-item ap-task-done');
+		// Its list, once: drawn without its own indent, so its checks line up with the text above it.
+		for (let back = index - 3; back >= 0; back -= 1) {
+			const list = tokens[back];
+			if (list.level >= item.level || (list.type !== 'bullet_list_open' && list.type !== 'ordered_list_open')) continue;
+			if (!list.attrGet('class')) list.attrSet('class', 'ap-task-list');
+			break;
+		}
+	}
+});
+/** Whether Markdown holds a task list item that renders as a checkbox (`task_lists`): parsed as it would render. */
+export function hasTaskItems(source: string): boolean {
+	return md.parse(withoutBidiOverrides(source), {}).some((token) => token.type === 'list_item_open' && String(token.attrGet('class') ?? '').split(' ').includes('ap-task-item'));
+}
+
 // Wide tables scroll inside the message rather than widening it.
 md.renderer.rules.table_open = () => '<div class="ap-table"><table>\n';
 md.renderer.rules.table_close = () => '</table></div>\n';
@@ -55,7 +95,7 @@ export type RoomMentionResolver = (id: string) => RoomMentionTarget | undefined;
  */
 export interface LinkChip {
 	kind: 'room' | 'thread' | 'message' | 'user';
-	/** On another server: not a mention but a chip of its own, its host first, that says opening it leaves this one. */
+	/** On another server: not a mention but a chip of its own, its server first, that says it opens in a new tab. */
 	elsewhere?: boolean;
 	/** The link under it, in place of the one written: its https form with the server, even for a relative one. */
 	href: string;
@@ -151,6 +191,24 @@ function markdown(source: string): string {
 	}
 	rendered.set(source, html);
 	return html;
+}
+
+/**
+ * The roles a markdown body mentions (`@&role`, Appendix A.3) where it renders them: outside code and links, as
+ * `linkText` skips them. Once each, in order. A role typed whole counts though no chip names it.
+ */
+export function markdownRoles(source: string): string[] {
+	const roles = new Set<string>();
+	let codeDepth = 0;
+	for (const part of markdown(withoutBidiOverrides(source)).split(/(<[^>]*>)/)) {
+		if (part.startsWith('<')) {
+			if (/^<(code|pre|a)[\s>]/i.test(part)) codeDepth += 1;
+			else if (/^<\/(code|pre|a)\s*>$/i.test(part) && codeDepth > 0) codeDepth -= 1;
+		} else if (codeDepth === 0) {
+			for (const match of part.matchAll(ESCAPED_MENTION)) if (match[1] !== undefined) roles.add(match[1]);
+		}
+	}
+	return [...roles];
 }
 
 /**
